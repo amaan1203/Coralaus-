@@ -47,16 +47,18 @@ coralaus/            # Python package
    ```bash
    pip install -r requirements.txt
    ```
-2. **Run the UI**
+2. **setup the gemini key, github PAT and groq api key**
+
+3. **Run the UI**
    ```bash
    streamlit run ui/app.py --server.headless true --server.port 8501
    ```
-3. **Process a paper**
+4. **Process a paper**
    ```bash
    python -m agents.ingest path/to/paper.pdf
    # Output written to ./output/current_paper.json and includes a `full_text` field
    ```
-4. **Run the full pipeline**
+5. **Run the full pipeline**
    ```bash
    python scripts/test_full_pipeline.py [path_to_pdf]
    ```
