@@ -57,6 +57,9 @@ def check_compatibility(repo_url: str, owner: str = None, repo: str = None) -> d
     if not dep_files:
         return _empty_result("No dependency files found in repository")
 
+    # Detect the repo's actual entrypoint script
+    entrypoint = _detect_entrypoint(owner, repo)
+
     result = {
         "requirements_found": True,
         "dep_files": {name: content[:500] for name, content in dep_files.items()},
@@ -64,6 +67,7 @@ def check_compatibility(repo_url: str, owner: str = None, repo: str = None) -> d
         "warnings": [],
         "clean": True,
         "analysis_method": None,
+        "entrypoint": entrypoint,
     }
 
     # Step 2: Try automated pip dry-run (no LLM)
@@ -252,6 +256,61 @@ If no real conflicts exist, return: {{"conflicts": [], "warnings": [], "clean": 
         return None
 
 
+def _detect_entrypoint(owner: str, repo: str) -> str:
+    """
+    Detect the main entrypoint script of a repo by checking for common filenames.
+    Uses Coral first, falls back to GitHub API. Returns the best-guess entrypoint
+    filename (e.g. 'main.py', 'train.py') or None if nothing obvious is found.
+    """
+    # Ordered by priority — most common ML repo entrypoints first
+    candidates = [
+        "main.py", "train.py", "run.py", "app.py", "demo.py",
+        "run_experiment.py", "train_model.py", "evaluate.py", "test.py",
+    ]
+
+    coral = get_coral_client()
+    if coral.available:
+        candidate_list = ", ".join(f"'{c}'" for c in candidates)
+        result = coral.sql(f"""
+            SELECT path
+            FROM github.contents
+            WHERE owner = '{owner}'
+              AND repo = '{repo}'
+              AND path IN ({candidate_list})
+        """)
+        if result and "results" in result:
+            found_files = [r.get("path", "") for r in result["results"]]
+            # Return the highest-priority match
+            for candidate in candidates:
+                if candidate in found_files:
+                    logger.info(f"Detected entrypoint via Coral: {candidate}")
+                    return candidate
+
+    # Fallback: check via GitHub API
+    try:
+        import requests
+        headers = {}
+        token = os.environ.get("GITHUB_TOKEN")
+        if token and "dummy" not in token.lower() and "your_" not in token.lower():
+            headers["Authorization"] = f"token {token}"
+
+        resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}/contents/",
+            headers=headers, timeout=10
+        )
+        if resp.status_code == 200:
+            root_files = [item["name"] for item in resp.json() if item["type"] == "file"]
+            for candidate in candidates:
+                if candidate in root_files:
+                    logger.info(f"Detected entrypoint via GitHub API: {candidate}")
+                    return candidate
+    except Exception as e:
+        logger.debug(f"Entrypoint detection via GitHub API failed: {e}")
+
+    logger.info("No standard entrypoint detected — will let Dockerfile generator decide")
+    return None
+
+
 def _empty_result(reason: str) -> dict:
     return {
         "requirements_found": False,
@@ -260,6 +319,7 @@ def _empty_result(reason: str) -> dict:
         "warnings": [reason],
         "clean": True,
         "analysis_method": None,
+        "entrypoint": None,
     }
 
 

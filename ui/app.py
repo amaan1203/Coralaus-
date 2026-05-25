@@ -287,6 +287,7 @@ if uploaded_file:
                         req_content,
                         compat_result.get("conflicts", []),
                         paper_json.get("title", ""),
+                        entrypoint=compat_result.get("entrypoint"),
                     )
                     total_llm_calls["groq_llama"] += 1
 
@@ -304,7 +305,10 @@ if uploaded_file:
                         req_content = content
                         break
                 if req_content:
-                    resolver_result = resolve_conflicts(req_content, [], paper_json.get("title", ""))
+                    resolver_result = resolve_conflicts(
+                        req_content, [], paper_json.get("title", ""),
+                        entrypoint=compat_result.get("entrypoint"),
+                    )
 
         else:
             # === Component 6: Generate from Scratch ===
