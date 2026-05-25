@@ -1,0 +1,46 @@
+# PapersWithCode Custom Coral Source Spec
+# This provides a SQL interface over the PapersWithCode API via Coral.
+# Used alongside the PapersWithCode MCP server for a dual-query approach.
+
+name: paperswithcode
+base_url: https://paperswithcode.com/api/v1
+auth:
+  type: none   # PapersWithCode API is public, no auth needed
+endpoints:
+  - name: papers
+    path: /papers/
+    method: GET
+    params:
+      - name: q
+        type: string
+        description: Paper title or keyword search
+      - name: arxiv_id
+        type: string
+        description: arXiv paper ID
+      - name: items_per_page
+        type: integer
+        description: Number of results per page
+    response_map:
+      results:
+        - id: id
+          title: title
+          arxiv_id: arxiv_id
+          url_pdf: url_pdf
+          abstract: abstract
+
+  - name: paper_repositories
+    path: /papers/{paper_id}/repositories/
+    method: GET
+    params:
+      - name: paper_id
+        type: string
+        description: PapersWithCode paper ID
+    response_map:
+      results:
+        - url: url
+          owner: owner
+          name: name
+          stars: stars
+          framework: framework
+          is_official: is_official
+          description: description

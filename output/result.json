@@ -1,0 +1,42 @@
+{
+  "paper": {
+    "title": "Mask R-CNN",
+    "arxiv_id": "1703.06870",
+    "authors": [
+      "Google Research"
+    ],
+    "year": null,
+    "abstract": "We present a conceptually simple, ﬂexible, and general\nframework for object instance segmentation. Our approach\nefﬁciently detects objects in an image while simultaneously\ngenerating a high-quality segmentation mask for each in-\nstance. The method, called Mask R-CNN, extends Faster\nR-CNN by adding a branch for predicting an object mask in\nparallel with the existing branch for bounding box recogni-\ntion. Mask R-CNN is simple to train and adds only a small\noverhead to Faster R-CNN, running at 5 fp",
+    "parsed_by": "pypdf"
+  },
+  "implementation_found": true,
+  "repo_url": "https://github.com/jasjeetIM/Mask-RCNN",
+  "search_method": "direct_github_arxiv_id",
+  "repo_health_score": 50,
+  "health_signals": {
+    "last_commit_days_ago": 2530,
+    "open_issues": 11,
+    "stars": 230,
+    "forks": 139,
+    "archived": false
+  },
+  "health_label": "Stale",
+  "health_emoji": "🟠",
+  "conflicts_found": [],
+  "conflicts_resolved": false,
+  "dep_warnings": [
+    "No dependency files found in repository"
+  ],
+  "dockerfile": null,
+  "implementation_script": null,
+  "resolved_requirements": null,
+  "generated_from_scratch": false,
+  "keyterms": [],
+  "related_repos": [],
+  "coral_queries_used": 8,
+  "llm_calls": {
+    "gemini_flash": 0,
+    "groq_llama": 0
+  },
+  "timestamp": "2026-05-25T14:23:28.248196+00:00"
+}
