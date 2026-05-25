@@ -51,7 +51,7 @@ coralaus/            # Python package
 
 3. **Run the UI**
    ```bash
-   streamlit run ui/app.py --server.headless true --server.port 8501
+   streamlit run ui/app.py 
    ```
 4. **Process a paper**
    ```bash
