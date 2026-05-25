@@ -3,7 +3,7 @@
 > Pirates of the Coral-bean Hackathon · Track 2
 
 **Coralaus** takes a research paper (PDF) as input and:
-1. Parses the full paper into a structured JSON representation offline using PyPDF2 (no Grobid).
+1. Parses the full paper into a structured JSON representation offline using PyPDF2.
 2. Checks for official code implementations on GitHub using PapersWithCode MCP / direct search.
 3. Automatically scores the repository's maintenance health (0‑100) using Coral SQL queries.
 4. Identifies and resolves Python package dependency conflicts, outputting a valid `Dockerfile` for execution.
