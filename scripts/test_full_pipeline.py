@@ -114,7 +114,8 @@ def run_full_pipeline(pdf_path: str = None):
                     req_content = content
                     break
             resolver_result = resolve_conflicts(
-                req_content, compat_result.get('conflicts', []), paper_json.get('title', '')
+                req_content, compat_result.get('conflicts', []), paper_json.get('title', ''),
+                entrypoint=compat_result.get('entrypoint'),
             )
             total_llm_calls['groq_llama'] += 1
             print(f"  Dockerfile generated: {bool(resolver_result.get('dockerfile'))}")
