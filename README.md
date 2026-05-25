@@ -1,4 +1,4 @@
-# 🚢 Coralaus
+# Coralaus
 
 > Pirates of the Coral-bean Hackathon · Track 2
 
@@ -11,7 +11,7 @@
 
 ---
 
-## 🛠️ Architecture
+## Architecture
 
 Coralaus utilizes a **Dual MCP** and **Coral SQL** architecture:
 - **PapersWithCode MCP Server:** Integrated via subprocess StdIO transport.
@@ -19,7 +19,7 @@ Coralaus utilizes a **Dual MCP** and **Coral SQL** architecture:
 - **Offline Fallbacks:** Gracefully falls back to direct unauthenticated GitHub REST API calls when rate‑limited or using dummy keys.
 - **Lightweight Parser:** Uses local PyPDF2 offline extraction (Grobid removed).
 
-## 📁 File Structure
+##  File Structure
 
 ```
 coralaus/            # Python package
@@ -41,7 +41,7 @@ coralaus/            # Python package
 └── coralaus/        # Package init files
 ```
 
-## 🚀 Setup & Usage
+##  Setup & Usage
 
 1. **Install dependencies**
    ```bash
@@ -65,7 +65,7 @@ All generated files are stored under the `./output` directory relative to the re
 
 ---
 
-## 📦 Build Docker Image
+##  Build Docker Image
 
 The Dockerfile now uses relative paths only:
 ```dockerfile
