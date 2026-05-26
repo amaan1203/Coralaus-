@@ -24,7 +24,7 @@ from agents.conflict_resolver import resolve_conflicts
 from agents.no_impl_generator import generate_from_scratch
 from agents.output_builder import build_output, save_output, format_summary
 from agents.coral_utils import get_coral_client
-from agents.pwc_mcp_client import get_pwc_client
+from agents.pwc_mcp_client import get_s2_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ with st.sidebar:
     coral = get_coral_client()
     st.markdown(f"{'✅' if coral.available else '⚠️'} Coral CLI {'(ready)' if coral.available else '(fallback mode)'}")
 
-    pwc = get_pwc_client()
+    pwc = get_s2_client()
     st.markdown(f"{'✅' if pwc.available else '❌'} Semantic Scholar API")
 
     st.divider()

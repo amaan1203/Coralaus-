@@ -1,8 +1,7 @@
---find-links https://download.pytorch.org/whl/torch_stable.html
-torch==1.9.0+cu111
-torchvision==0.10.0+cu111
-transformers==4.21.3
-spacy==3.4.4
-tqdm==4.64.0
-tensorboard==2.10.1
-progress==0.6
+torch>=2.2.0
+transformers>=4.40.0
+datasets>=2.18.0
+tqdm>=4.66.0
+numpy>=1.26.0
+pandas>=2.2.0
+matplotlib>=3.8.0

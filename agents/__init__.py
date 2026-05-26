@@ -1,7 +1,7 @@
 # PaperDock Agents
 # Each module corresponds to a component in the pipeline:
 #   ingest.py          — C1: PDF → JSON (GROBID/Docling)
-#   pwc_search.py      — C2: PapersWithCode search
+#   pwc_search.py      — C2: Semantic Scholar + GitHub search
 #   repo_health.py     — C3: GitHub health scoring via Coral
 #   compat_check.py    — C4: Dependency compatibility check
 #   conflict_resolver.py — C5: Conflict resolution + Dockerfile gen

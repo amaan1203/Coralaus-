@@ -239,12 +239,12 @@ class SemanticScholarClient:
 
 
 # ---------------------------------------------------------------------------
-# Singleton — function name kept identical so ui/app.py needs no changes
+# Singleton
 # ---------------------------------------------------------------------------
 _client: Optional[SemanticScholarClient] = None
 
 
-def get_pwc_client() -> SemanticScholarClient:
+def get_s2_client() -> SemanticScholarClient:
     """Get or create the global Semantic Scholar client."""
     global _client
     if _client is None:
