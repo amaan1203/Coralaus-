@@ -31,7 +31,7 @@ def build_output(
 
     Args:
         paper_json: Parsed paper from Component 1
-        search_result: PapersWithCode search result from Component 2
+        search_result: Semantic Scholar + GitHub search result from Component 2
         health_result: Repo health check from Component 3
         compat_result: Compatibility check from Component 4
         resolver_result: Conflict resolution from Component 5

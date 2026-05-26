@@ -64,23 +64,5 @@ coralaus/            # Python package
    ```
 
 All generated files are stored under the `./output` directory relative to the repository root.
-
----
-
-##  Build Docker Image
-
-The Dockerfile now uses relative paths only:
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY . /app
-RUN pip install --no-cache-dir -r requirements.txt
-CMD ["streamlit", "run", "ui/app.py", "--server.headless", "true", "--server.port", "8501"]
-```
-Build with:
-```bash
-docker build -t coralaus .
-```
-
 ---
 

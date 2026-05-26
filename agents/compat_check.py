@@ -104,7 +104,7 @@ def check_compatibility(repo_url: str, owner: str = None, repo: str = None) -> d
         if pip_result["has_errors"] or reconstructed:
             result["conflicts"] = pip_result["errors"] if pip_result["has_errors"] else ["Reconstructed requirements list - Dockerfile generation requested."]
             result["warnings"].extend(pip_result["warnings"])
-            result["clean"] = False if reconstructed else pip_result["clean"]
+            result["clean"] = False if reconstructed else not pip_result["has_errors"]
             result["analysis_method"] = "pip_dry_run" if pip_result["has_errors"] else "reconstructed"
             result["warnings"].insert(0, f"Dependency file used: {req_file_used}")
 

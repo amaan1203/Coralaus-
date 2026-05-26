@@ -1,6 +1,7 @@
-torch>=1.7
-torchvision
-pyyaml
-huggingface_hub>=0.17.0
-safetensors>=0.2
-numpy
+torch>=2.2.0
+transformers>=4.40.0
+datasets>=2.18.0
+tqdm>=4.66.0
+numpy>=1.26.0
+pandas>=2.2.0
+matplotlib>=3.8.0

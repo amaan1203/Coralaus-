@@ -1,43 +1,42 @@
 {
   "paper": {
-    "title": "Masked Autoencoders Are Scalable Vision Learners",
-    "arxiv_id": "2111.06377",
+    "title": "LORA: LOW-RANK ADAPTATION OF LARGE LAN",
+    "arxiv_id": "2106.09685",
     "authors": [
       "Google Research"
     ],
     "year": null,
-    "abstract": "This paper shows that masked autoencoders (MAE) are\nscalable self-supervised learners for computer vision. Our\nMAE approach is simple: we mask random patches of the\ninput image and reconstruct the missing pixels. It is based\non two core designs. First, we develop an asymmetric\nencoder-decoder architecture, with an encoder that oper-\nates only on the visible subset of patches (without mask to-\nkens), along with a lightweight decoder that reconstructs\nthe original image from the latent representat",
+    "abstract": "An important paradigm of natural language processing consists of large-scale pre-\ntraining on general domain data and adaptation to particular tasks or domains. As\nwe pre-train larger models, full ﬁne-tuning, which retrains all model parameters,\nbecomes less feasible. Using GPT-3 175B as an example – deploying indepen-\ndent instances of ﬁne-tuned models, each with 175B parameters, is prohibitively\nexpensive. We propose Low-RankAdaptation, or LoRA, which freezes the pre-\ntrained model weights and",
     "parsed_by": "pypdf"
   },
   "implementation_found": true,
-  "repo_url": "https://github.com/facebookresearch/mae",
-  "search_method": "direct_github_arxiv_id",
-  "repo_health_score": 0,
+  "repo_url": "https://github.com/microsoft/LoRA.",
+  "search_method": "arxiv_id",
+  "repo_health_score": 100,
   "health_signals": {
-    "last_commit_days_ago": 672,
-    "open_issues": 133,
-    "stars": 8328,
-    "forks": 1349,
-    "archived": true
+    "last_commit_days_ago": null,
+    "open_issues": null,
+    "stars": null,
+    "forks": null,
+    "archived": null
   },
-  "health_label": "Dead",
-  "health_emoji": "🔴",
+  "health_label": "Healthy",
+  "health_emoji": "🟢",
   "conflicts_found": [],
-  "conflicts_resolved": true,
+  "conflicts_resolved": false,
   "dep_warnings": [
-    "pip is outdated, consider updating to version 26.1.1",
-    "setuptools version is not explicitly specified, may cause issues in the future"
+    "No dependency files found in repository"
   ],
-  "dockerfile": "# Use the official NVIDIA CUDA base image to support GPU acceleration\nFROM nvidia/cuda:11.7.0-cudnn8-runtime-ubuntu20.04\n\n# Set the working directory to /app\nWORKDIR /app\n\n# Install system dependencies commonly needed for ML\nRUN apt update && apt install -y \\\n    build-essential \\\n    git \\\n    python3 \\\n    python3-pip \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Create a symlink so python points to python3\nRUN ln -s /usr/bin/python3 /usr/bin/python\n\n# Install pip dependencies\nRUN pip3 install \\\n    torch==1.13.1+cu117 --find-links https://download.pytorch.org/whl/cu117 \\\n    torchvision==0.14.1+cu117 --find-links https://download.pytorch.org/whl/cu117 \\\n    pyyaml==6.0 \\\n    huggingface_hub==0.17.0 \\\n    safetensors==0.2.2 \\\n    numpy==1.23.4\n\n# Copy all project files into the working directory\nCOPY . .\n\n# Set the default command to None\n# No CMD instruction as per the rules",
+  "dockerfile": null,
   "implementation_script": null,
-  "resolved_requirements": "torch>=1.7\ntorchvision\npyyaml\nhuggingface_hub>=0.17.0\nsafetensors>=0.2\nnumpy\n",
+  "resolved_requirements": null,
   "generated_from_scratch": false,
   "keyterms": [],
   "related_repos": [],
-  "coral_queries_used": 15,
+  "coral_queries_used": 0,
   "llm_calls": {
     "gemini_flash": 0,
-    "groq_llama": 1
+    "groq_llama": 0
   },
-  "timestamp": "2026-05-26T08:16:54.176470+00:00"
+  "timestamp": "2026-05-26T11:46:31.412330+00:00"
 }

@@ -1,8 +1,8 @@
 """
-Component 2 — PapersWithCode Search
+Component 2 — Implementation Search (Semantic Scholar + GitHub)
 
-Searches PapersWithCode for existing implementations of a paper.
-Uses the PapersWithCode API (same data exposed by the MCP server).
+Searches Semantic Scholar for known papers, then finds implementations
+via GitHub repository search (arXiv ID-based).
 
 Input:  Paper JSON (title, arxiv_id from Component 1)
 Output: Best repo URL + metadata, or None if no implementation found
@@ -10,14 +10,14 @@ Output: Best repo URL + metadata, or None if no implementation found
 
 import logging
 from typing import Optional
-from agents.pwc_mcp_client import get_pwc_client
+from agents.pwc_mcp_client import get_s2_client
 
 logger = logging.getLogger(__name__)
 
 
 def search_implementation(paper_json: dict) -> dict:
     """
-    Search PapersWithCode for implementations of the given paper.
+    Search Semantic Scholar + GitHub for implementations of the given paper.
 
     Args:
         paper_json: Parsed paper JSON from Component 1
@@ -29,12 +29,12 @@ def search_implementation(paper_json: dict) -> dict:
             - stars (int): Repo star count
             - framework (str): ML framework used
             - is_official (bool): Official implementation flag
-            - paper_id (str): PapersWithCode paper ID
+            - paper_id (str): Semantic Scholar / arXiv paper ID
             - search_method (str): How the repo was found
     """
     title = paper_json.get("title", "")
     arxiv_id = paper_json.get("arxiv_id", "")
-    pwc = get_pwc_client()
+    pwc = get_s2_client()
 
     result = {
         "found": False,
@@ -48,7 +48,7 @@ def search_implementation(paper_json: dict) -> dict:
 
     # Strategy 1: Search by arXiv ID (most precise)
     if arxiv_id:
-        logger.info(f"Searching PWC by arXiv ID: {arxiv_id}")
+        logger.info(f"Searching Semantic Scholar by arXiv ID: {arxiv_id}")
         paper = pwc.get_paper_by_arxiv_id(arxiv_id)
         if paper:
             paper_id = paper.get("id")
@@ -69,7 +69,7 @@ def search_implementation(paper_json: dict) -> dict:
 
     # Strategy 2: Search by title
     if title:
-        logger.info(f"Searching PWC by title: '{title[:60]}'")
+        logger.info(f"Searching Semantic Scholar by title: '{title[:60]}'")
         papers = pwc.search_papers(title, items_per_page=5)
         for paper in papers:
             paper_id = paper.get("id")
@@ -94,7 +94,7 @@ def search_implementation(paper_json: dict) -> dict:
         # Use first few significant words as search terms
         keywords = _extract_search_terms(title)
         if keywords:
-            logger.info(f"Searching PWC by keywords: '{keywords}'")
+            logger.info(f"Searching Semantic Scholar by keywords: '{keywords}'")
             papers = pwc.search_papers(keywords, items_per_page=3)
             for paper in papers:
                 paper_id = paper.get("id")
@@ -114,7 +114,7 @@ def search_implementation(paper_json: dict) -> dict:
                         logger.info(f"Found repo via keyword search: {result['repo_url']}")
                         return result
 
-    logger.info("No implementation found on PapersWithCode. Trying direct GitHub search fallback...")
+    logger.info("No implementation found on Semantic Scholar. Trying direct GitHub search fallback...")
 
     # Strategy 4: Check if the abstract/paper body mentions a GitHub URL directly
     # This is the most authoritative signal — the authors link to their own code
@@ -171,7 +171,7 @@ def search_implementation(paper_json: dict) -> dict:
                     logger.info(f"Found repo via direct GitHub title search: {result['repo_url']}")
                     return result
 
-    logger.info("No implementation found on PapersWithCode or GitHub search")
+    logger.info("No implementation found on Semantic Scholar or GitHub search")
     return result
 
 
