@@ -70,15 +70,25 @@ def check_compatibility(repo_url: str, owner: str = None, repo: str = None) -> d
         "entrypoint": entrypoint,
     }
 
-    # Step 2: Try automated pip dry-run (no LLM)
-    requirements_content = dep_files.get("requirements.txt", "")
+    # Step 2: Try automated pip dry-run on all requirement files
+    # Find all requirement files (root or subdirectory)
+    requirements_content = ""
+    req_file_used = None
+    for name, content in dep_files.items():
+        if 'requirement' in name.lower() and name.lower().endswith('.txt'):
+            requirements_content = content
+            req_file_used = name
+            break
+
     if requirements_content:
+        logger.info(f"Running pip dry-run on: {req_file_used}")
         pip_result = _pip_dry_run(requirements_content)
         if pip_result["has_errors"]:
             result["conflicts"] = pip_result["errors"]
             result["warnings"] = pip_result["warnings"]
             result["clean"] = False
             result["analysis_method"] = "pip_dry_run"
+            result["warnings"].insert(0, f"Dependency file used: {req_file_used}")
 
             # Step 3: If conflicts found, get detailed analysis from Groq
             groq_analysis = _groq_analyze(requirements_content, pip_result["raw_output"])
@@ -107,7 +117,8 @@ def _fetch_dep_files_coral(owner: str, repo: str) -> dict:
         return {}
 
     dep_files = {}
-    for filename in ['requirements.txt', 'environment.yml', 'setup.py', 'pyproject.toml']:
+    # Check root-level files (including 'requirement.txt' without 's')
+    for filename in ['requirements.txt', 'requirement.txt', 'environment.yml', 'setup.py', 'pyproject.toml']:
         result = coral.sql(f"""
             SELECT content_text as content
             FROM github.contents
@@ -133,7 +144,8 @@ def _fetch_dep_files_github(owner: str, repo: str) -> dict:
         headers["Authorization"] = f"token {token}"
 
     dep_files = {}
-    targets = ["requirements.txt", "environment.yml", "setup.py", "pyproject.toml"]
+    # Include 'requirement.txt' (without 's') — common in some ML repos
+    targets = ["requirements.txt", "requirement.txt", "environment.yml", "setup.py", "pyproject.toml"]
 
     for filename in targets:
         try:
@@ -153,6 +165,61 @@ def _fetch_dep_files_github(owner: str, repo: str) -> dict:
                         dep_files[filename] = dl_resp.text
         except Exception as e:
             logger.debug(f"Could not fetch {filename}: {e}")
+
+    # If no requirements file found at root, search subdirectories
+    if not any(k for k in dep_files if 'requirement' in k.lower()):
+        logger.info("No requirements at root. Searching subdirectories...")
+        sub_reqs = _search_subdirs_for_requirements(owner, repo, headers)
+        dep_files.update(sub_reqs)
+
+    return dep_files
+
+
+def _search_subdirs_for_requirements(owner: str, repo: str, headers: dict) -> dict:
+    """Search subdirectories for requirement files using GitHub API tree endpoint."""
+    import requests
+
+    dep_files = {}
+    try:
+        # Use the Git tree API to search the whole repo at once
+        resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1",
+            headers=headers, timeout=15
+        )
+        if resp.status_code != 200:
+            return dep_files
+
+        tree = resp.json().get("tree", [])
+        req_files = [
+            item["path"] for item in tree
+            if item["type"] == "blob"
+            and any(name in item["path"].lower().split("/")[-1]
+                    for name in ["requirements.txt", "requirement.txt",
+                                 "requirements_dev.txt", "requirements-dev.txt"])
+        ]
+
+        if req_files:
+            logger.info(f"Found requirement files in subdirs: {req_files}")
+            # Fetch each file's content (limit to first 3 to avoid rate limits)
+            for path in req_files[:3]:
+                try:
+                    file_resp = requests.get(
+                        f"https://api.github.com/repos/{owner}/{repo}/contents/{path}",
+                        headers=headers, timeout=10
+                    )
+                    if file_resp.status_code == 200:
+                        data = file_resp.json()
+                        if data.get("encoding") == "base64":
+                            import base64
+                            content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+                            # Store with the full path as the key so we know where it came from
+                            dep_files[path] = content
+                            logger.info(f"  Fetched {path} ({len(content)} bytes)")
+                except Exception as e:
+                    logger.debug(f"Could not fetch {path}: {e}")
+
+    except Exception as e:
+        logger.debug(f"Subdirectory search failed: {e}")
 
     return dep_files
 

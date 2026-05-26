@@ -102,10 +102,15 @@ class PapersWithCodeMCPClient:
             resp = requests.get(
                 f"{self.PWC_API_BASE}/papers/",
                 params={"q": query, "items_per_page": items_per_page},
-                timeout=15
+                timeout=15,
+                allow_redirects=True,
             )
             if resp.status_code == 200:
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except ValueError:
+                    logger.error(f"  PWC API returned non-JSON (content-type: {resp.headers.get('content-type')})")
+                    return []
                 results = data.get("results", [])
                 logger.info(f"  Found {len(results)} papers")
                 return results
@@ -133,10 +138,15 @@ class PapersWithCodeMCPClient:
             resp = requests.get(
                 f"{self.PWC_API_BASE}/papers/",
                 params={"arxiv_id": arxiv_id},
-                timeout=15
+                timeout=15,
+                allow_redirects=True,
             )
             if resp.status_code == 200:
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except ValueError:
+                    logger.error(f"  PWC API returned non-JSON for arxiv lookup")
+                    return None
                 results = data.get("results", [])
                 if results:
                     logger.info(f"  Found paper: {results[0].get('title', 'Unknown')}")
@@ -162,10 +172,15 @@ class PapersWithCodeMCPClient:
         try:
             resp = requests.get(
                 f"{self.PWC_API_BASE}/papers/{paper_id}/repositories/",
-                timeout=15
+                timeout=15,
+                allow_redirects=True,
             )
             if resp.status_code == 200:
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except ValueError:
+                    logger.error(f"  PWC API returned non-JSON for repo lookup")
+                    return []
                 results = data.get("results", [])
                 logger.info(f"  Found {len(results)} repositories")
                 return results

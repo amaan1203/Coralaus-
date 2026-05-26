@@ -279,7 +279,7 @@ if uploaded_file:
                 with st.status("🔧 Component 5: Resolving conflicts with Groq...", expanded=True) as status:
                     req_content = ""
                     for name, content in compat_result.get("dep_files", {}).items():
-                        if "requirements" in name:
+                        if "requirement" in name.lower():
                             req_content = content
                             break
 
@@ -301,7 +301,7 @@ if uploaded_file:
                 # Generate basic Dockerfile for clean repos too
                 req_content = ""
                 for name, content in compat_result.get("dep_files", {}).items():
-                    if "requirements" in name:
+                    if "requirement" in name.lower():
                         req_content = content
                         break
                 if req_content:

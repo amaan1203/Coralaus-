@@ -110,7 +110,7 @@ def run_full_pipeline(pdf_path: str = None):
             print("-" * 40)
             req_content = ""
             for name, content in compat_result.get('dep_files', {}).items():
-                if 'requirements' in name:
+                if 'requirement' in name.lower():
                     req_content = content
                     break
             resolver_result = resolve_conflicts(
