@@ -3,7 +3,12 @@
     "title": "BERT: Pre-training of Deep Bidirectional Transformers for",
     "arxiv_id": "1810.04805",
     "authors": [
-      "Google Research"
+      "Jongheon Jeong",
+      "Yang Zou",
+      "Taewan Kim",
+      "Dongqing Zhang",
+      "Avinash Ravichandran",
+      "et al. (+1)"
     ],
     "year": null,
     "abstract": "We introduce a new language representa-\ntion model called BERT , which stands for\nBidirectional Encoder Representations from\nTransformers. Unlike recent language repre-\nsentation models (Peters et al., 2018a; Rad-\nford et al., 2018), BERT is designed to pre-\ntrain deep bidirectional representations from\nunlabeled text by jointly conditioning on both\nleft and right context in all layers. As a re-\nsult, the pre-trained BERT model can be ﬁne-\ntuned with just one additional output layer\nto create st",
@@ -33,7 +38,7 @@
   "generated_from_scratch": false,
   "keyterms": [],
   "related_repos": [],
-  "coral_queries_used": 0,
+  "coral_queries_used": 10,
   "llm_calls": {
     "gemini_flash": 0,
     "groq_llama": 0

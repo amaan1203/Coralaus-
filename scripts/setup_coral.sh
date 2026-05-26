@@ -10,7 +10,8 @@ echo "  Coralus — Coral Setup"
 echo "========================================="
 
 # Check Coral installation
-if ! command -v coral &> /dev/null; then
+CORAL_BIN=$(command -v coral || command -v coral.exe)
+if [ -z "$CORAL_BIN" ]; then
     echo "   Coral CLI not found."
     echo "   Install with: brew install withcoral/tap/coral"
     echo ""
@@ -18,7 +19,7 @@ if ! command -v coral &> /dev/null; then
     exit 1
 fi
 
-echo " Coral CLI found: $(coral --version 2>/dev/null || echo 'version unknown')"
+echo " Coral CLI found: $("$CORAL_BIN" --version 2>/dev/null || echo 'version unknown')"
 
 # Load GITHUB_TOKEN from .env if not set
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -41,8 +42,8 @@ if [ -z "$GITHUB_TOKEN" ] || [ "$GITHUB_TOKEN" = "your_github_token_here" ] || [
 else
     echo "Re-configuring GitHub source in Coral..."
     # Remove old github source if exists to update credentials
-    coral source remove github &>/dev/null || true
-    if coral source add github; then
+    "$CORAL_BIN" source remove github &>/dev/null || true
+    if "$CORAL_BIN" source add github; then
         echo " GitHub source configured successfully!"
     else
         echo " Failed to add GitHub source."
@@ -56,8 +57,8 @@ echo "--- Step 2: Add PapersWithCode custom source ---"
 SPEC_PATH="$SCRIPT_DIR/../sources/paperswithcode.yaml"
 
 if [ -f "$SPEC_PATH" ]; then
-    coral source remove paperswithcode &>/dev/null || true
-    if coral source add paperswithcode --spec "$SPEC_PATH" &>/dev/null; then
+    "$CORAL_BIN" source remove paperswithcode &>/dev/null || true
+    if "$CORAL_BIN" source add paperswithcode --spec "$SPEC_PATH" &>/dev/null; then
         echo " PapersWithCode source added"
     else
         echo "  PapersWithCode source add failed or already exists"
@@ -69,13 +70,13 @@ fi
 # 3. Verify sources
 echo ""
 echo "--- Step 3: Verify sources ---"
-coral source list || echo "  Could not list sources"
+"$CORAL_BIN" source list || echo "  Could not list sources"
 
 # 4. Test a simple query
 echo ""
 echo "--- Step 4: Test query ---"
 echo "Testing GitHub connection..."
-if coral sql "SELECT number, title, state, created_at FROM github.issues WHERE owner = 'withcoral' AND repo = 'coral' AND state = 'open' LIMIT 5"; then
+if "$CORAL_BIN" sql "SELECT number, title, state, created_at FROM github.issues WHERE owner = 'withcoral' AND repo = 'coral' AND state = 'open' LIMIT 5"; then
     echo " GitHub queries working!"
 else
     echo " Test query failed — check your GITHUB_TOKEN or internet connection."

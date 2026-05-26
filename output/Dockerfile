@@ -9,8 +9,8 @@ RUN apt update && apt install -y \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a symlink so python points to python3
-RUN ln -s /usr/bin/python3 /usr/bin/python
+# Install the dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Set up a clean working directory
 WORKDIR /app
