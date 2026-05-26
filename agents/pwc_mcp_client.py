@@ -98,21 +98,30 @@ class SemanticScholarClient:
         """
         Find GitHub repositories implementing this paper.
 
-        Semantic Scholar does not expose direct code links, so we search
-        GitHub for repositories that reference the arXiv ID in their
-        description, README, or topics.
+        Strategy:
+          1. Hugging Face Papers API  — extracts the official GitHub URL
+             from the abstract as written by the authors themselves.
+             This is the most authoritative source (is_official=True).
+          2. GitHub search fallback   — searches repos that reference
+             the arXiv ID (less precise, is_official=False).
 
         paper_id is expected to be the arXiv ID (set by _normalize_paper).
         """
         if not paper_id:
             return []
 
+        # Strategy 1: HF Papers API — official link from authors' abstract
         self.call_count += 1
-        logger.info(f"[S2 #{self.call_count}] Searching GitHub repos for: {paper_id}")
+        logger.info(f"[HF #{self.call_count}] Checking HF Papers API for official repo: {paper_id}")
+        official = self._get_official_repo_from_hf(paper_id)
+        if official:
+            return [official]
 
+        # Strategy 2: GitHub search fallback
+        self.call_count += 1
+        logger.info(f"[S2 #{self.call_count}] No official repo found — falling back to GitHub search: {paper_id}")
         repos = self._search_github(f'"{paper_id}" language:python')
         if not repos:
-            # Broader fallback without language filter
             repos = self._search_github(f'"{paper_id}"')
 
         return repos
@@ -172,6 +181,55 @@ class SemanticScholarClient:
                 time.sleep(1)
 
         logger.error(f"  S2 request failed after {retries} retries: {url}")
+        return None
+
+    def _get_official_repo_from_hf(self, arxiv_id: str) -> Optional[dict]:
+        """
+        Call the Hugging Face Papers API and extract the official GitHub URL
+        from the paper's abstract (summary). Authors typically link their
+        own implementation in their abstract, making this the most reliable
+        source for an official repo.
+
+        API: https://huggingface.co/api/papers/{arxiv_id}
+        No authentication required.
+        """
+        try:
+            resp = requests.get(
+                f"https://huggingface.co/api/papers/{arxiv_id}",
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                summary = data.get("summary", "")
+                github_url = self._extract_github_url(summary)
+                if github_url:
+                    logger.info(f"  Official repo found in HF Papers abstract: {github_url}")
+                    return {
+                        "url": github_url,
+                        "stars": 0,  # not available from this source
+                        "framework": self._detect_framework(summary),
+                        "is_official": True,
+                    }
+                else:
+                    logger.info(f"  HF Papers: paper found but no GitHub URL in abstract")
+            elif resp.status_code == 404:
+                logger.info(f"  HF Papers: paper {arxiv_id} not indexed")
+            else:
+                logger.warning(f"  HF Papers API error: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"  HF Papers API failed: {e}")
+        return None
+
+    def _extract_github_url(self, text: str) -> Optional[str]:
+        """Extract the first GitHub repository URL from a block of text."""
+        import re
+        match = re.search(
+            r'https?://github\.com/([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+)',
+            text
+        )
+        if match:
+            owner, repo = match.group(1), match.group(2)
+            return f"https://github.com/{owner}/{repo}"
         return None
 
     def _search_github(self, query: str) -> list[dict]:
