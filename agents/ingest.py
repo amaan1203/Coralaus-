@@ -169,7 +169,7 @@ def _parse_with_pypdf(pdf_path: str) -> Optional[dict]:
                 sections = [{"heading": "Full Text", "text": full_text}]
 
             paper = {
-                "title": title or os.path.splitext(os.path.basename(pdf_path))[0],
+                "title": _clean_title(title) or os.path.splitext(os.path.basename(pdf_path))[0],
                 "abstract": abstract or full_text[:1000],
                 "authors": authors,
                 "year": None,
@@ -188,6 +188,22 @@ def _parse_with_pypdf(pdf_path: str) -> Optional[dict]:
     except Exception as e:
         logger.error(f"PyPDF2 parsing failed: {e}")
         return None
+
+
+def _clean_title(title: str) -> str:
+    """Clean up PDF-extracted title artifacts (extra spaces, line-break hyphens, etc.)."""
+    import re
+    if not title:
+        return title
+    # Remove trailing hyphen from line-break (e.g. "LAN-" -> "LAN")
+    title = re.sub(r'-\s*$', '', title)
+    # Collapse runs of whitespace (PDF line-break artifacts like "L OW" -> "LOW")
+    # Heuristic: single uppercase letter followed by space then uppercase = broken word
+    title = re.sub(r'(?<=\b[A-Z])\s(?=[A-Z])', '', title)
+    # Collapse remaining multiple spaces
+    title = re.sub(r'\s{2,}', ' ', title)
+    return title.strip()
+
 
 def _extract_arxiv_id_from_text(text: str) -> str:
     import re

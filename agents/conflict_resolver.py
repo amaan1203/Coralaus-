@@ -97,7 +97,7 @@ Rules:
 - Pin all dependency versions
 - Add a comment above each conflict fix explaining what was changed
 - Install system dependencies commonly needed for ML (build-essential, git, etc.)
-- Set up a clean working directory
+- Set up a clean working directory and copy all project files into it
 {cmd_instruction}
 """,
             },
