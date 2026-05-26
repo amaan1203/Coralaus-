@@ -31,7 +31,7 @@ def run_full_pipeline(pdf_path: str = None):
     from agents.no_impl_generator import generate_from_scratch
     from agents.output_builder import build_output, save_output, format_summary
     from agents.coral_utils import get_coral_client
-    from agents.pwc_mcp_client import get_pwc_client
+    from agents.pwc_mcp_client import get_s2_client
 
     print("\n" + "=" * 70)
     print("  coralus — Full Pipeline Test")
@@ -39,7 +39,7 @@ def run_full_pipeline(pdf_path: str = None):
 
     start_time = time.time()
     coral = get_coral_client()
-    pwc = get_pwc_client()
+    pwc = get_s2_client()
     total_llm_calls = {"gemini_flash": 0, "groq_llama": 0}
 
     # --- Download sample if needed ---

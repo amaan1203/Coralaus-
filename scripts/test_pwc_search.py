@@ -18,13 +18,13 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 
 def test_pwc_search():
     from agents.pwc_search import search_implementation
-    from agents.pwc_mcp_client import get_pwc_client
+    from agents.pwc_mcp_client import get_s2_client
 
     print("\n" + "=" * 60)
     print("TEST: Component 2 — PapersWithCode Search")
     print("=" * 60)
 
-    pwc = get_pwc_client()
+    pwc = get_s2_client()
     if not pwc.available:
         print("  PapersWithCode API not available — check your network")
         return False
