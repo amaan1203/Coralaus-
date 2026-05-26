@@ -1,17 +1,22 @@
 {
   "paper": {
-    "title": "LORA: LOW-RANK ADAPTATION OF LARGE LAN",
-    "arxiv_id": "2106.09685",
+    "title": "WinCLIP: Zero-/Few-Shot Anomaly Classification and Segmentation",
+    "arxiv_id": "2303.14814",
     "authors": [
-      "Google Research"
+      "Jongheon Jeong",
+      "Yang Zou",
+      "Taewan Kim",
+      "Dongqing Zhang",
+      "Avinash Ravichandran",
+      "et al. (+1)"
     ],
-    "year": null,
-    "abstract": "An important paradigm of natural language processing consists of large-scale pre-\ntraining on general domain data and adaptation to particular tasks or domains. As\nwe pre-train larger models, full ﬁne-tuning, which retrains all model parameters,\nbecomes less feasible. Using GPT-3 175B as an example – deploying indepen-\ndent instances of ﬁne-tuned models, each with 175B parameters, is prohibitively\nexpensive. We propose Low-RankAdaptation, or LoRA, which freezes the pre-\ntrained model weights and",
-    "parsed_by": "pypdf"
+    "year": 2023,
+    "abstract": "Visual anomaly classification and segmentation are vital for automating industrial quality inspection. The focus of prior research in the field has been on training custom models for each quality inspection task, which requires task-specific images and annotation. In this paper we move away from this regime, addressing zero-shot and few-normal-shot anomaly classification and segmentation. Recently CLIP, a vision-language model, has shown revolutionary generality with competitive zero-/few-shot p",
+    "parsed_by": "doi_html"
   },
   "implementation_found": true,
-  "repo_url": "https://github.com/microsoft/LoRA.",
-  "search_method": "arxiv_id",
+  "repo_url": "https://github.com/xrli-U/MuSc.",
+  "search_method": "title",
   "repo_health_score": 100,
   "health_signals": {
     "last_commit_days_ago": null,
@@ -33,10 +38,10 @@
   "generated_from_scratch": false,
   "keyterms": [],
   "related_repos": [],
-  "coral_queries_used": 0,
+  "coral_queries_used": 10,
   "llm_calls": {
     "gemini_flash": 0,
     "groq_llama": 0
   },
-  "timestamp": "2026-05-26T11:46:31.412330+00:00"
+  "timestamp": "2026-05-26T15:29:04.721276+00:00"
 }
