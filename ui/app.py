@@ -146,7 +146,7 @@ with st.sidebar:
     st.markdown(f"{'✅' if coral.available else '⚠️'} Coral CLI {'(ready)' if coral.available else '(fallback mode)'}")
 
     pwc = get_pwc_client()
-    st.markdown(f"{'✅' if pwc.available else '❌'} PapersWithCode API")
+    st.markdown(f"{'✅' if pwc.available else '❌'} Semantic Scholar API")
 
     st.divider()
     st.markdown("### 📊 Query Counter")
@@ -161,7 +161,7 @@ with st.sidebar:
     with col1:
         st.metric("Coral SQL", st.session_state.coral_queries)
     with col2:
-        st.metric("PWC API", st.session_state.pwc_calls)
+        st.metric("S2 API", st.session_state.pwc_calls)
 
     st.divider()
 
