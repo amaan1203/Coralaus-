@@ -1,7 +1,6 @@
---find-links https://download.pytorch.org/whl/torch_stable.html
-torch==1.7.1+cu101
-transformers==3.3.1
-spacy
-tqdm
-tensorboard
-progress
+torch>=1.7
+torchvision
+pyyaml
+huggingface_hub>=0.17.0
+safetensors>=0.2
+numpy

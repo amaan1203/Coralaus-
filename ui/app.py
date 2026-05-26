@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 from agents.ingest import parse_paper
 from agents.pwc_search import search_implementation
