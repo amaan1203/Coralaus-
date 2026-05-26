@@ -29,6 +29,70 @@ from agents.pwc_mcp_client import get_s2_client
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def render_results(final_output, paper_json=None):
+    if not paper_json:
+        paper_json = {
+            "title": final_output["paper"]["title"],
+            "arxiv_id": final_output["paper"].get("arxiv_id"),
+            "authors": [{"first": name.split()[0] if name.split() else "", "last": name.split()[-1] if len(name.split()) > 1 else ""} for name in final_output["paper"].get("authors", [])],
+            "year": final_output["paper"].get("year"),
+            "abstract": final_output["paper"].get("abstract", "")
+        }
+
+    # === Results Display ===
+    st.divider()
+    st.markdown("## 📊 Results")
+
+    # Summary
+    st.text(format_summary(final_output))
+
+    # Download buttons
+    st.markdown("### 📥 Downloads")
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.download_button(
+            "📄 Paper JSON",
+            data=json.dumps(paper_json, indent=2),
+            file_name="current_paper.json",
+            mime="application/json",
+            key="dl_paper_json"
+        )
+
+    with col2:
+        st.download_button(
+            "📊 Full Result",
+            data=json.dumps(final_output, indent=2),
+            file_name="result.json",
+            mime="application/json",
+            key="dl_result_json"
+        )
+
+    with col3:
+        if final_output.get("dockerfile"):
+            st.download_button(
+                "🐳 Dockerfile",
+                data=final_output["dockerfile"],
+                file_name="Dockerfile",
+                mime="text/plain",
+                key="dl_dockerfile"
+            )
+
+    with col4:
+        if final_output.get("implementation_script"):
+            st.download_button(
+                "🐍 Implementation",
+                data=final_output["implementation_script"],
+                file_name="implementation.py",
+                mime="text/x-python",
+                key="dl_impl"
+            )
+
+    # Collapsible raw data
+    with st.expander("🔍 Full Output JSON"):
+        st.json(final_output)
+
 # --- Page Config ---
 st.set_page_config(
     page_title="Coralaus — Research Paper Implementation Finder",
@@ -128,6 +192,25 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# --- Load Last Run if Exists ---
+if "final_output" not in st.session_state:
+    result_path = os.path.join("output", "result.json")
+    if os.path.exists(result_path):
+        try:
+            with open(result_path, "r", encoding="utf-8") as f:
+                saved_output = json.load(f)
+                st.session_state.final_output = saved_output
+                st.session_state.coral_queries = saved_output.get("coral_queries_used", 0)
+                st.session_state.llm_calls = saved_output.get("llm_calls", {"gemini_flash": 0, "groq_llama": 0})
+                
+                # Check if current_paper.json exists
+                paper_json_path = os.path.join("output", "current_paper.json")
+                if os.path.exists(paper_json_path):
+                    with open(paper_json_path, "r", encoding="utf-8") as pf:
+                        st.session_state.paper_json = json.load(pf)
+        except Exception as e:
+            logger.error(f"Failed to load saved result: {e}")
+
 # --- Sidebar ---
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
@@ -178,13 +261,32 @@ if uploaded_file:
     # Save uploaded file
     os.makedirs("output", exist_ok=True)
     pdf_path = os.path.join("output", uploaded_file.name)
-    with open(pdf_path, "wb") as f:
-        f.write(uploaded_file.getvalue())
-
-    st.success(f"Uploaded: {uploaded_file.name} ({len(uploaded_file.getvalue()) / 1024:.1f} KB)")
+    
+    # If the file hasn't been saved yet, or if it's different, let's save it
+    # and clear the loaded final_output to prevent showing the old results
+    if not os.path.exists(pdf_path):
+        with open(pdf_path, "wb") as f:
+            f.write(uploaded_file.getvalue())
+        st.success(f"Uploaded: {uploaded_file.name} ({len(uploaded_file.getvalue()) / 1024:.1f} KB)")
+        
+        # Clear previous run state since we have a new upload
+        if "final_output" in st.session_state:
+            del st.session_state.final_output
+        if "paper_json" in st.session_state:
+            del st.session_state.paper_json
+    else:
+        st.info(f"Using already uploaded file: {uploaded_file.name}")
 
     # Run pipeline button
-    if st.button(" Analyze Paper", type="primary", use_container_width=True):
+    analyze_clicked = st.button(" Analyze Paper", type="primary", use_container_width=True)
+    
+    if analyze_clicked:
+        # Clear state for a fresh run
+        if "final_output" in st.session_state:
+            del st.session_state.final_output
+        if "paper_json" in st.session_state:
+            del st.session_state.paper_json
+
         # Initialize tracking
         coral.reset_query_count()
         pwc.reset_call_count()
@@ -343,77 +445,41 @@ if uploaded_file:
 
             st.session_state.coral_queries = coral.get_query_count()
             st.session_state.llm_calls = total_llm_calls
+            
+            # Store in session state for persistence
+            st.session_state.final_output = final_output
+            st.session_state.paper_json = paper_json
 
             status.update(label="✅ Component 7: Output assembled", state="complete")
 
-        # === Results Display ===
-        st.divider()
-        st.markdown("## 📊 Results")
-
-        # Summary
-        st.text(format_summary(final_output))
-
-        # Download buttons
-        st.markdown("### 📥 Downloads")
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.download_button(
-                "📄 Paper JSON",
-                data=json.dumps(paper_json, indent=2),
-                file_name="current_paper.json",
-                mime="application/json",
-            )
-
-        with col2:
-            st.download_button(
-                "📊 Full Result",
-                data=json.dumps(final_output, indent=2),
-                file_name="result.json",
-                mime="application/json",
-            )
-
-        with col3:
-            if final_output.get("dockerfile"):
-                st.download_button(
-                    "🐳 Dockerfile",
-                    data=final_output["dockerfile"],
-                    file_name="Dockerfile",
-                    mime="text/plain",
-                )
-
-        with col4:
-            if final_output.get("implementation_script"):
-                st.download_button(
-                    "🐍 Implementation",
-                    data=final_output["implementation_script"],
-                    file_name="implementation.py",
-                    mime="text/x-python",
-                )
-
-        # Collapsible raw data
-        with st.expander("🔍 Full Output JSON"):
-            st.json(final_output)
+    # Render results under the button if they exist in session state
+    if "final_output" in st.session_state:
+        render_results(st.session_state.final_output, st.session_state.get("paper_json"))
 
 else:
-    # No file uploaded — show instructions
-    st.markdown("### 🗺️ How It Works")
+    # No file uploaded
+    if "final_output" in st.session_state:
+        st.info(f"Showing results from last analyzed paper: **{st.session_state.final_output['paper']['title']}**")
+        render_results(st.session_state.final_output, st.session_state.get("paper_json"))
+    else:
+        # No file uploaded and no previous results — show instructions
+        st.markdown("### 🗺️ How It Works")
 
-    cols = st.columns(4)
-    steps = [
-        ("🔍", "Find Code", "PapersWithCode MCP + Coral GitHub search"),
-        ("🏥", "Health Check", "Coral SQL queries score the repo 0–100"),
-        ("🐳", "Get Dockerfile", "Conflicts resolved, Dockerfile generated"),
-    ]
+        cols = st.columns(3)
+        steps = [
+            ("🔍", "Find Code", "PapersWithCode MCP + Coral GitHub search"),
+            ("🏥", "Health Check", "Coral SQL queries score the repo 0–100"),
+            ("🐳", "Get Dockerfile", "Conflicts resolved, Dockerfile generated"),
+        ]
 
-    for col, (icon, title, desc) in zip(cols, steps):
-        with col:
-            st.markdown(f"""
-            <div class="stat-card">
-                <div style="font-size: 2rem">{icon}</div>
-                <div class="stat-value" style="font-size: 1rem; margin-top: 8px">{title}</div>
-                <div class="stat-label" style="font-size: 0.7rem; text-transform: none; margin-top: 4px">{desc}</div>
-            </div>
-            """, unsafe_allow_html=True)
+        for col, (icon, title, desc) in zip(cols, steps):
+            with col:
+                st.markdown(f"""
+                <div class="stat-card">
+                    <div style="font-size: 2rem">{icon}</div>
+                    <div class="stat-value" style="font-size: 1rem; margin-top: 8px">{title}</div>
+                    <div class="stat-label" style="font-size: 0.7rem; text-transform: none; margin-top: 4px">{desc}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-    st.info("👆 Upload a research paper PDF to get started!")
+        st.info("👆 Upload a research paper PDF to get started!")
