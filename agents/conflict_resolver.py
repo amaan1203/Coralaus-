@@ -17,7 +17,9 @@ from agents.coral_utils import get_coral_client
 logger = logging.getLogger(__name__)
 
 
-def resolve_conflicts(requirements_content: str, conflicts: list, paper_title: str = "", entrypoint: str = None) -> dict:
+def resolve_conflicts(requirements_content: str, conflicts: list, paper_title: str = "",
+                      entrypoint: str = None, readme_content: str = "",
+                      dep_files: dict = None, repo_year: str = None) -> dict:
     """
     Resolve dependency conflicts and generate a working Dockerfile.
 
@@ -27,6 +29,9 @@ def resolve_conflicts(requirements_content: str, conflicts: list, paper_title: s
         paper_title: Paper title for Dockerfile comments
         entrypoint: Detected entrypoint script (e.g. 'main.py', 'train.py').
                     If None, the Dockerfile will use a generic COPY without a CMD.
+        readme_content: README.md content for build instructions
+        dep_files: All dependency files found {filename: content}
+        repo_year: Year the repository was created/last active (for temporal pinning)
 
     Returns:
         Dict with:
@@ -35,6 +40,9 @@ def resolve_conflicts(requirements_content: str, conflicts: list, paper_title: s
             - environment_yaml (str): Optional conda environment
             - resolution_notes (list): What was changed and why
     """
+    if dep_files is None:
+        dep_files = {}
+
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         logger.warning("GROQ_API_KEY not set, generating basic Dockerfile")
@@ -58,16 +66,28 @@ def resolve_conflicts(requirements_content: str, conflicts: list, paper_title: s
         # 4. FLARE Active Retrieval
         flare_contexts = _flare_active_retrieval(client, conflicts)
 
-        # Generate Dockerfile
+        # Generate Dockerfile with full context
         dockerfile = _generate_dockerfile(
             client, requirements_content, conflicts, paper_title, entrypoint,
-            rag_dockerfiles=rag_dockerfiles, flare_contexts=flare_contexts
+            rag_dockerfiles=rag_dockerfiles, flare_contexts=flare_contexts,
+            readme_content=readme_content, dep_files=dep_files, repo_year=repo_year
         )
+
+        # 5. Self-healing validation
+        from agents.dockerfile_validator import validate_dockerfile
+        validation = validate_dockerfile(dockerfile, dep_files, readme_content)
+        if not validation["valid"]:
+            logger.warning(f"Dockerfile validation found {len(validation['issues'])} issues: {validation['issues']}")
+            dockerfile = _self_heal_dockerfile(
+                client, dockerfile, validation["issues"],
+                requirements_content, dep_files, readme_content
+            )
 
         # Generate resolved requirements
         resolved_reqs = _resolve_requirements(
             client, requirements_content, conflicts,
-            rag_dockerfiles=rag_dockerfiles, flare_contexts=flare_contexts
+            rag_dockerfiles=rag_dockerfiles, flare_contexts=flare_contexts,
+            repo_year=repo_year
         )
 
         return {
@@ -252,7 +272,7 @@ def _search_github_dockerfiles(keywords: list) -> list:
         """
         content_res = coral.sql(content_sql)
         if content_res and "results" in content_res and content_res["results"]:
-            content = content_res["results"][0].get("content")
+            content = content_res["results"][0].get("content") or content_res["results"][0].get("content_text")
             if content:
                 dockerfiles.append({
                     "repo": repo_full,
@@ -311,7 +331,7 @@ def _flare_active_retrieval(client, conflicts: list) -> list:
             """
             content_res = coral.sql(content_sql)
             if content_res and "results" in content_res and content_res["results"]:
-                content = content_res["results"][0].get("content")
+                content = content_res["results"][0].get("content") or content_res["results"][0].get("content_text")
                 if content:
                     lines = content.split("\n")
                     matching_lines = []
@@ -349,54 +369,95 @@ def _flare_active_retrieval(client, conflicts: list) -> list:
     return retrieved_contexts
 
 
-def _generate_dockerfile(client, requirements: str, conflicts: list, paper_title: str, entrypoint: str = None, rag_dockerfiles: list = None, flare_contexts: list = None) -> str:
-    """Generate a working Dockerfile using Groq, enriched with RAG context."""
-    if entrypoint:
-        cmd_instruction = f"- The final CMD should be: python {entrypoint}"
-    else:
-        cmd_instruction = "- Do NOT include a CMD instruction since the repo entrypoint is unknown"
+def _generate_dockerfile(client, requirements: str, conflicts: list, paper_title: str,
+                         entrypoint: str = None, rag_dockerfiles: list = None,
+                         flare_contexts: list = None, readme_content: str = "",
+                         dep_files: dict = None, repo_year: str = None) -> str:
+    """Generate a working Dockerfile using Groq, enriched with RAG + repo context."""
+    if dep_files is None:
+        dep_files = {}
 
+    if entrypoint:
+        cmd_instruction = f"7. CMD: `python {entrypoint}`"
+    else:
+        cmd_instruction = "7. CMD: Do NOT include a CMD instruction since the repo entrypoint is unknown"
+
+    # Build reference context from RAG
     reference_context = ""
     if rag_dockerfiles:
-        reference_context += "\nHere are reference Dockerfiles from other repositories that solve similar installations:\n"
+        reference_context += "\n## Reference Dockerfiles from similar repositories:\n"
         for i, df in enumerate(rag_dockerfiles):
             reference_context += f"--- Reference Dockerfile {i+1} (from {df['repo']}:{df['path']}) ---\n"
             reference_context += df['content'][:1500] + "\n"
 
     if flare_contexts:
-        reference_context += "\nHere are additional real-world installation snippets and references found on GitHub:\n"
+        reference_context += "\n## Real-world installation snippets from GitHub:\n"
         for ctx in flare_contexts:
             reference_context += f"- {ctx}\n"
+
+    # Build dependency files context (ALL files, not just requirements.txt)
+    dep_context = ""
+    if dep_files:
+        dep_context = "\n## All dependency files found in the repository:\n"
+        for name, content in dep_files.items():
+            dep_context += f"\n--- {name} ---\n{content[:3000]}\n"
+    elif requirements:
+        dep_context = f"\n## requirements.txt:\n{requirements[:3000]}\n"
+
+    # Build README context
+    readme_section = ""
+    if readme_content:
+        readme_section = f"\n## README.md (may contain build/install instructions):\n{readme_content[:3000]}\n"
+        readme_section += "\nCRITICAL: If the README mentions special installation steps (e.g. 'pip install open_spiel', "
+        readme_section += "'build from source', custom CUDA instructions, conda commands), you MUST include those steps in the Dockerfile.\n"
+
+    # Temporal pinning rule
+    temporal_rule = ""
+    if repo_year:
+        temporal_rule = f"""\nTEMPORAL RULE: This repository is from {repo_year}.
+- Pin ALL packages to versions that were current in {repo_year}
+- Do NOT upgrade to latest versions — they may have breaking API changes
+- Example: A 2019 repo should use torch~=1.2, NOT torch>=2.0\n"""
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
             {
                 "role": "system",
-                "content": "You are a DevOps expert. Return only raw Dockerfile content, no markdown fences or extra text.",
+                "content": "You are a DevOps expert specializing in ML research reproducibility. Return only raw Dockerfile content, no markdown fences or extra text.",
             },
             {
                 "role": "user",
                 "content": f"""Generate a working Dockerfile for this ML research paper implementation.
 
 Paper: {paper_title}
-
-requirements.txt:
-{requirements[:3000]}
+{temporal_rule}
+{dep_context}
 
 Known conflicts to fix:
 {json.dumps(conflicts[:10], indent=2)}
 {reference_context}
+{readme_section}
 
-Rules:
-- CRITICAL BASE IMAGE RULE: You must analyze the provided 'Reference Dockerfiles' to determine the correct base image. If the requirements contain heavy ML frameworks (torch, tensorflow, jax) with CUDA dependencies, you MUST use an official nvidia/cuda base image that matches the references. Do NOT use python:slim images for GPU-bound ML frameworks.
-CRITICAL SYSTEM RULE: If you select a bare-metal OS image like nvidia/cuda or ubuntu, you MUST explicitly install python3, python3-pip, and create a symlink so python points to python3 BEFORE attempting to run any pip install commands
-- Pin all dependency versions
-- Add a comment above each conflict fix explaining what was changed
-- Install system dependencies commonly needed for ML (build-essential, git, etc.)
-- Set up a clean working directory and copy all project files into it
-- USE the above Reference Dockerfiles and Installation snippets to find correct pip install arguments (especially for torch/cuda binaries, e.g. using --find-links stable wheels if required)
+=== DOCKERFILE GENERATION CHECKLIST — follow these steps IN ORDER ===
+
+1. BASE IMAGE: If the repo uses torch/tensorflow/jax with CUDA, use nvidia/cuda (e.g. nvidia/cuda:11.8.0-devel-ubuntu22.04). Otherwise use python:3.X-slim.
+2. SYSTEM DEPS: Always install: build-essential, git, wget. Check README for extra system packages.
+3. PYTHON SETUP: If using nvidia/cuda or ubuntu base, MUST install python3, python3-pip, and create symlink `ln -sf /usr/bin/python3 /usr/bin/python`.
+4. COPY DEPENDENCY FILES FIRST (for Docker layer caching):
+   - If requirements.txt exists: `COPY requirements.txt .` then `RUN pip install --no-cache-dir -r requirements.txt`
+   - If setup.py exists: `COPY setup.py .` then `RUN pip install --no-cache-dir -e .` or `pip install .`
+   - If pyproject.toml exists: `COPY pyproject.toml .` then `RUN pip install --no-cache-dir .`
+5. COPY ALL SOURCE: `COPY . /workspace/`
+6. WORKDIR: Set to `/workspace`
 {cmd_instruction}
+
+=== ANTI-PATTERNS — NEVER DO THESE ===
+❌ Don't guess package names — use the requirements.txt / setup.py provided above
+❌ Don't hardcode `pip install torch==X.Y.Z` if torch is already listed in requirements.txt
+❌ Don't use python:slim for GPU-heavy ML frameworks (torch, tensorflow, jax)
+❌ Don't skip installing packages mentioned only in setup.py or pyproject.toml
+❌ Don't forget to install python3 when using a bare OS base image
 """,
             },
         ],
@@ -411,6 +472,50 @@ CRITICAL SYSTEM RULE: If you select a bare-metal OS image like nvidia/cuda or ub
         dockerfile = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
     return dockerfile
+
+
+def _self_heal_dockerfile(client, dockerfile: str, issues: list,
+                          requirements: str, dep_files: dict, readme_content: str) -> str:
+    """Re-prompt the LLM to fix validation issues found in the generated Dockerfile."""
+    dep_file_names = list(dep_files.keys()) if dep_files else []
+
+    correction_prompt = f"""The Dockerfile you generated has the following validation issues:
+
+{chr(10).join(f'- {issue}' for issue in issues)}
+
+Here is the Dockerfile:
+{dockerfile}
+
+Dependency files available in the repository: {dep_file_names}
+
+Fix ALL of the above issues. Remember:
+- If requirements.txt exists, COPY it and run `pip install -r requirements.txt`
+- If setup.py exists, COPY it and run `pip install .`
+- Use nvidia/cuda base image for GPU frameworks (torch, tensorflow, jax)
+- Install python3 and pip when using bare OS base images
+- Check the README for special build instructions
+
+Return ONLY the corrected Dockerfile content, no markdown fences or extra text."""
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a DevOps expert. Return only raw Dockerfile content, no markdown fences or extra text."},
+                {"role": "user", "content": correction_prompt}
+            ],
+            temperature=0.1,
+            max_tokens=2048,
+        )
+        corrected = response.choices[0].message.content.strip()
+        if corrected.startswith("```"):
+            lines = corrected.split("\n")
+            corrected = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        logger.info("Self-healing: Dockerfile corrected successfully")
+        return corrected
+    except Exception as e:
+        logger.error(f"Self-healing correction failed: {e}")
+        return dockerfile  # Return original if correction fails
 
 
 def _resolve_requirements(client, requirements: str, conflicts: list, rag_dockerfiles: list = None, flare_contexts: list = None, repo_year: str = None) -> dict:
