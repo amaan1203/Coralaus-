@@ -22,3 +22,13 @@ output/
 # OS
 .DS_Store
 Thumbs.db
+node_modules/
+coral-x86_64-pc-windows-msvc.zip
+coral/
+coral/coral.exe
+.env
+current_page.json
+Dockerfile
+output/
+package.json
+package-lock.json
