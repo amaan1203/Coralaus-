@@ -1,47 +1,40 @@
 {
   "paper": {
-    "title": "BERT: Pre-training of Deep Bidirectional Transformers for",
-    "arxiv_id": "1810.04805",
-    "authors": [
-      "Jongheon Jeong",
-      "Yang Zou",
-      "Taewan Kim",
-      "Dongqing Zhang",
-      "Avinash Ravichandran",
-      "et al. (+1)"
-    ],
-    "year": null,
-    "abstract": "We introduce a new language representa-\ntion model called BERT , which stands for\nBidirectional Encoder Representations from\nTransformers. Unlike recent language repre-\nsentation models (Peters et al., 2018a; Rad-\nford et al., 2018), BERT is designed to pre-\ntrain deep bidirectional representations from\nunlabeled text by jointly conditioning on both\nleft and right context in all layers. As a re-\nsult, the pre-trained BERT model can be ﬁne-\ntuned with just one additional output layer\nto create st",
-    "parsed_by": "pypdf"
+    "title": "LoRA: Low-Rank Adaptation of Large Language Models",
+    "arxiv_id": "2106.09685",
+    "authors": [],
+    "year": 2021,
+    "abstract": "An important paradigm of natural language processing consists of large-scale pre-training on general domain data and adaptation to particular tasks or domains. As we pre-train larger models, full fine-tuning, which retrains all model parameters, becomes less feasible. Using GPT-3 175B as an example -- deploying independent instances of fine-tuned models, each with 175B parameters, is prohibitively expensive. We propose Low-Rank Adaptation, or LoRA, which freezes the pre-trained model weights and",
+    "parsed_by": "arxiv_html"
   },
   "implementation_found": true,
-  "repo_url": "https://github.com/krantirk/BERT-Pretrained-model",
-  "search_method": "arxiv_id",
-  "repo_health_score": 40,
+  "repo_url": "https://github.com/microsoft/LoRA.",
+  "search_method": "title",
+  "repo_health_score": 100,
   "health_signals": {
-    "last_commit_days_ago": 2228,
-    "open_issues": 0,
-    "stars": 1,
-    "forks": 0,
-    "archived": false
+    "last_commit_days_ago": null,
+    "open_issues": null,
+    "stars": null,
+    "forks": null,
+    "archived": null
   },
-  "health_label": "Stale",
-  "health_emoji": "🟠",
+  "health_label": "Healthy",
+  "health_emoji": "🟢",
   "conflicts_found": [],
-  "conflicts_resolved": true,
+  "conflicts_resolved": false,
   "dep_warnings": [
-    "tensorflow-gpu is commented out, ensure the correct version of TensorFlow is installed for the desired hardware"
+    "No dependency files found in repository"
   ],
-  "dockerfile": "# Use the official NVIDIA CUDA base image to support GPU acceleration\nFROM nvidia/cuda:11.0-cudnn7-devel-ubuntu18.04\n\n# Install system dependencies commonly needed for ML\nRUN apt update && apt install -y \\\n    build-essential \\\n    git \\\n    python3 \\\n    python3-pip \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Create a symlink so python points to python3\nRUN ln -s /usr/bin/python3 /usr/bin/python\n\n# Set up a clean working directory\nWORKDIR /app\n\n# Copy all project files into the working directory\nCOPY . /app\n\n# Install pip dependencies with pinned versions\nRUN pip3 install --upgrade pip \\\n    && pip3 install \\\n    tensorflow==1.11.0\n\n# No conflicts to fix in this case\n# If there were conflicts, they would be addressed here with a comment explaining the fix\n\n# Verify the installation\nRUN python --version\nRUN pip3 --version\nRUN pip3 list tensorflow",
+  "dockerfile": null,
   "implementation_script": null,
-  "resolved_requirements": "tensorflow >= 1.11.0   # CPU Version of TensorFlow.\n# tensorflow-gpu  >= 1.11.0  # GPU version of TensorFlow.\n",
+  "resolved_requirements": null,
   "generated_from_scratch": false,
   "keyterms": [],
   "related_repos": [],
-  "coral_queries_used": 10,
+  "coral_queries_used": 11,
   "llm_calls": {
     "gemini_flash": 0,
     "groq_llama": 0
   },
-  "timestamp": "2026-05-26T16:02:55.157385+00:00"
+  "timestamp": "2026-05-27T07:52:35.602852+00:00"
 }

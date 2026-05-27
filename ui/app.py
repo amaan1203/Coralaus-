@@ -193,23 +193,22 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Load Last Run if Exists ---
-if "final_output" not in st.session_state:
-    result_path = os.path.join("output", "result.json")
-    if os.path.exists(result_path):
-        try:
-            with open(result_path, "r", encoding="utf-8") as f:
-                saved_output = json.load(f)
-                st.session_state.final_output = saved_output
-                st.session_state.coral_queries = saved_output.get("coral_queries_used", 0)
-                st.session_state.llm_calls = saved_output.get("llm_calls", {"gemini_flash": 0, "groq_llama": 0})
-                
+# if "final_output" not in st.session_state:
+#     result_path = os.path.join("output", "result.json")
+#     if os.path.exists(result_path):
+#         try:
+            # with open(result_path, "r", encoding="utf-8") as f:
+            #     saved_output = json.load(f)
+            #     st.session_state.final_output = saved_output
+            #     st.session_state.coral_queries = saved_output.get("coral_queries_used", 0)
+            #     st.session_state.llm_calls = saved_output.get("llm_calls", {"gemini_flash": 0, "groq_llama": 0})
                 # Check if current_paper.json exists
-                paper_json_path = os.path.join("output", "current_paper.json")
-                if os.path.exists(paper_json_path):
-                    with open(paper_json_path, "r", encoding="utf-8") as pf:
-                        st.session_state.paper_json = json.load(pf)
-        except Exception as e:
-            logger.error(f"Failed to load saved result: {e}")
+        #         paper_json_path = os.path.join("output", "current_paper.json")
+        #         if os.path.exists(paper_json_path):
+        #             with open(paper_json_path, "r", encoding="utf-8") as pf:
+        #                 st.session_state.paper_json = json.load(pf)
+        # except Exception as e:
+        #     logger.error(f"Failed to load saved result: {e}")
 
 # --- Sidebar ---
 with st.sidebar:
@@ -302,10 +301,10 @@ if uploaded_file:
                 st.write(f"**Sections:** {len(paper_json.get('sections', []))}")
                 st.write(f"**References:** {len(paper_json.get('references', []))}")
                 st.write(f"**Parsed by:** {paper_json.get('parsed_by', 'unknown')} (no LLM!)")
-                status.update(label="✅ Component 1: PDF parsed successfully", state="complete")
+                status.update(label="Component 1: PDF parsed successfully", state="complete")
             except Exception as e:
                 st.error(f"PDF parsing failed: {e}")
-                status.update(label="❌ Component 1: PDF parsing failed", state="error")
+                status.update(label="Component 1: PDF parsing failed", state="error")
                 st.stop()
 
         # === Component 2: PapersWithCode Search ===
@@ -318,10 +317,10 @@ if uploaded_file:
                 st.write(f"**Stars:** ⭐ {search_result.get('stars', 'N/A')}")
                 st.write(f"**Official:** {'Yes' if search_result.get('is_official') else 'No'}")
                 st.write(f"**Method:** {search_result.get('search_method', 'N/A')}")
-                status.update(label="✅ Component 2: Implementation found!", state="complete")
+                status.update(label="Component 2: Implementation found!", state="complete")
             else:
                 st.write("No implementation found on PapersWithCode")
-                status.update(label="⚠️ Component 2: No implementation found", state="complete")
+                status.update(label="Component 2: No implementation found", state="complete")
 
         health_result = None
         compat_result = None
