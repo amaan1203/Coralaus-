@@ -389,6 +389,9 @@ if uploaded_file:
                         compat_result.get("conflicts", []),
                         paper_json.get("title", ""),
                         entrypoint=compat_result.get("entrypoint"),
+                        readme_content=compat_result.get("readme_content", ""),
+                        dep_files=compat_result.get("dep_files", {}),
+                        repo_year=health_result.get("signals", {}).get("year") if health_result else None,
                     )
                     total_llm_calls["groq_llama"] += 1
 
@@ -409,6 +412,9 @@ if uploaded_file:
                     resolver_result = resolve_conflicts(
                         req_content, [], paper_json.get("title", ""),
                         entrypoint=compat_result.get("entrypoint"),
+                        readme_content=compat_result.get("readme_content", ""),
+                        dep_files=compat_result.get("dep_files", {}),
+                        repo_year=health_result.get("signals", {}).get("year") if health_result else None,
                     )
 
         else:

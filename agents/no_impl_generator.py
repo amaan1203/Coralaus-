@@ -68,30 +68,48 @@ def generate_from_scratch(paper_json: dict) -> dict:
 
             # 6c. Cross-repo JOIN — THE CORAL MONEY SHOT
             if repo_names:
-                repo_list = ", ".join(f"'{r}'" for r in repo_names)
-                files_result = coral.sql(f"""
-                    SELECT r.owner || '/' || r.name as full_name, f.content_text as content, f.path
-                    FROM github.contents f
-                    JOIN github.repositories r ON r.owner = f.owner AND r.name = f.repo
-                    WHERE r.owner || '/' || r.name IN ({repo_list})
-                      AND (f.path LIKE '%requirements%'
-                        OR f.path LIKE '%model%py'
-                        OR f.path LIKE '%train%py'
-                        OR f.path LIKE '%environment%')
-                    ORDER BY full_name, f.path
-                """)
-                coral_queries += 1
+                for repo_name in repo_names:
+                    parts = repo_name.split("/")
+                    if len(parts) != 2:
+                        continue
+                    owner, repo = parts[0], parts[1]
 
-                if files_result and "results" in files_result:
-                    for row in files_result["results"]:
-                        content = row.get("content", "")
-                        path = row.get("path", "")
-                        repo_name = row.get("full_name", "")
+                    tree_result = coral.sql(f"""
+                        SELECT path
+                        FROM github.trees
+                        WHERE owner = '{owner}'
+                          AND repo = '{repo}'
+                          AND tree_sha = 'HEAD'
+                          AND recursive = 'true'
+                          AND (path LIKE '%requirements%'
+                            OR path LIKE '%model%py'
+                            OR path LIKE '%train%py'
+                            OR path LIKE '%environment%')
+                        LIMIT 5
+                    """)
+                    coral_queries += 1
 
-                        if "requirements" in path or "environment" in path:
-                            common_deps.append(f"# From {repo_name}/{path}\n{content[:500]}")
-                        else:
-                            logic_files.append(f"# From {repo_name}/{path}\n{content[:1000]}")
+                    if tree_result and "results" in tree_result:
+                        for row in tree_result["results"]:
+                            path = row.get("path", "")
+                            if not path:
+                                continue
+                            content_result = coral.sql(f"""
+                                SELECT content_text as content
+                                FROM github.contents
+                                WHERE owner = '{owner}'
+                                  AND repo = '{repo}'
+                                  AND path = '{path}'
+                            """)
+                            coral_queries += 1
+
+                            if content_result and "results" in content_result and content_result["results"]:
+                                content = content_result["results"][0].get("content") or content_result["results"][0].get("content_text")
+                                if content:
+                                    if "requirements" in path or "environment" in path:
+                                        common_deps.append(f"# From {repo_name}/{path}\n{content[:500]}")
+                                    else:
+                                        logic_files.append(f"# From {repo_name}/{path}\n{content[:1000]}")
 
     # Fallback: search via GitHub API if Coral not available
     if not related_repos and keyterms:

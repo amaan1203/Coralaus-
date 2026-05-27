@@ -45,6 +45,7 @@ def check_repo_health(repo_url: str) -> dict:
         "stars": None,
         "forks": None,
         "archived": None,
+        "year": None,  # Year of last commit — used for temporal version pinning
     }
 
     # Query 1: Last commit date
@@ -63,6 +64,7 @@ def check_repo_health(repo_url: str) -> dict:
                 try:
                     commit_date = datetime.fromisoformat(commit_date_str.replace("Z", "+00:00")).date()
                     signals["last_commit_days_ago"] = (date.today() - commit_date).days
+                    signals["year"] = str(commit_date.year)
                 except (ValueError, TypeError):
                     pass
 
@@ -213,6 +215,7 @@ def _github_api_fallback(owner: str, repo: str) -> dict:
         "stars": None,
         "forks": None,
         "archived": None,
+        "year": None,
     }
 
     try:
@@ -233,6 +236,7 @@ def _github_api_fallback(owner: str, repo: str) -> dict:
                 try:
                     push_date = datetime.fromisoformat(pushed_at.replace("Z", "+00:00")).date()
                     signals["last_commit_days_ago"] = (date.today() - push_date).days
+                    signals["year"] = str(push_date.year)
                 except (ValueError, TypeError):
                     pass
     except Exception as e:

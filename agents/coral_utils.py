@@ -72,7 +72,13 @@ class CoralClient:
             if not output:
                 return {"results": []}
 
-            return json.loads(output)
+            parsed = json.loads(output)
+            if isinstance(parsed, list):
+                return {"results": parsed}
+            elif isinstance(parsed, dict) and "results" in parsed:
+                return parsed
+            else:
+                return {"results": [parsed]}
 
         except subprocess.TimeoutExpired:
             logger.error(f"Coral query timed out after {timeout}s")
