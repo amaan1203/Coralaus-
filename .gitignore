@@ -32,3 +32,4 @@ Dockerfile
 output/
 package.json
 package-lock.json
+coro/
