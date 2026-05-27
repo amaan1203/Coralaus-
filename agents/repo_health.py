@@ -78,11 +78,11 @@ def check_repo_health(repo_url: str) -> dict:
         if rows:
             signals["open_issues"] = rows[0].get("open_issues", 0)
 
-    # Query 3: Repo metadata (stars, forks, archived)
+    # Query 3: Repo metadata (stars, forks, archived) — use repos_get for fast index lookup
     meta_result = coral.sql(f"""
         SELECT stargazers_count, forks_count, archived
-        FROM github.repositories
-        WHERE owner = '{owner}' AND name = '{repo}'
+        FROM github.repos_get
+        WHERE owner = '{owner}' AND repo = '{repo}'
     """)
     if meta_result and "results" in meta_result:
         rows = meta_result["results"]
@@ -91,8 +91,8 @@ def check_repo_health(repo_url: str) -> dict:
             signals["forks"] = rows[0].get("forks_count", 0)
             signals["archived"] = rows[0].get("archived", False)
 
-    # If we couldn't get any signals via Coral (due to auth failure), use GitHub API fallback
-    if signals["stars"] is None and signals["last_commit_days_ago"] is None:
+    # If we couldn't get key signals via Coral (due to auth failure), use GitHub API fallback
+    if signals["stars"] is None or signals["last_commit_days_ago"] is None:
         logger.info("Coral query returned no data (possibly auth failure). Falling back to GitHub API...")
         return _github_api_fallback(owner, repo)
 

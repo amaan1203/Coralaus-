@@ -15,12 +15,46 @@ Output: Paper metadata + best GitHub repo URL
 """
 
 import os
+import json
 import time
 import logging
 import requests
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Simple disk-backed cache for S2 search results
+# Avoids re-hitting the rate-limited API for the same paper title.
+# ---------------------------------------------------------------------------
+_S2_CACHE_PATH = os.path.join(os.path.dirname(__file__), "..", "output", "s2_cache.json")
+_s2_memory_cache: dict = {}
+
+def _cache_key(query: str) -> str:
+    import re
+    return re.sub(r'[^a-z0-9]+', '_', query.lower().strip()).strip('_')
+
+def _load_cache() -> dict:
+    global _s2_memory_cache
+    if _s2_memory_cache:
+        return _s2_memory_cache
+    try:
+        cache_path = os.path.abspath(_S2_CACHE_PATH)
+        if os.path.exists(cache_path):
+            with open(cache_path, "r") as f:
+                _s2_memory_cache = json.load(f)
+    except Exception:
+        _s2_memory_cache = {}
+    return _s2_memory_cache
+
+def _save_cache(cache: dict):
+    try:
+        cache_path = os.path.abspath(_S2_CACHE_PATH)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        logger.debug(f"S2 cache save failed: {e}")
 
 
 class SemanticScholarClient:
@@ -58,6 +92,13 @@ class SemanticScholarClient:
         self.call_count += 1
         logger.info(f"[S2 #{self.call_count}] Searching papers: '{query[:80]}'")
 
+        # Check cache first to avoid rate-limited API call
+        cache = _load_cache()
+        key = _cache_key(query)
+        if key in cache:
+            logger.info(f"  S2 cache hit for '{query[:60]}'")
+            return cache[key]
+
         resp = self._get(
             f"{self.S2_API_BASE}/paper/search",
             params={"query": query, "limit": items_per_page, "fields": self.PAPER_FIELDS},
@@ -67,7 +108,10 @@ class SemanticScholarClient:
         if resp.status_code == 200:
             results = resp.json().get("data", [])
             logger.info(f"  Found {len(results)} papers")
-            return [self._normalize_paper(p) for p in results]
+            normalized = [self._normalize_paper(p) for p in results]
+            cache[key] = normalized
+            _save_cache(cache)
+            return normalized
         else:
             logger.error(f"  S2 search error: {resp.status_code} — {resp.text[:200]}")
             return []
@@ -152,13 +196,13 @@ class SemanticScholarClient:
             h["x-api-key"] = self._api_key
         return h
 
-    def _get(self, url: str, params: dict = None, retries: int = 3) -> Optional[requests.Response]:
+    def _get(self, url: str, params: dict = None, retries: int = 1) -> Optional[requests.Response]:
         """
         Rate-limit-aware GET with automatic retry on 429.
-        Enforces a minimum interval between calls so we stay under the
-        unauthenticated 1 req/s limit.
+        Retries kept at 1 (down from 3) — S2 is consistently rate-limited without
+        an API key. The GitHub fallback is faster and more reliable.
+        Set SEMANTIC_SCHOLAR_API_KEY to unlock 10 req/s and remove this bottleneck.
         """
-        # Throttle: wait if we're calling too fast
         if not self._api_key:
             elapsed = time.time() - self._last_call_time
             if elapsed < self._MIN_INTERVAL:
@@ -170,7 +214,7 @@ class SemanticScholarClient:
                 self._last_call_time = time.time()
 
                 if resp.status_code == 429:
-                    wait = int(resp.headers.get("Retry-After", 2)) + 1
+                    wait = min(int(resp.headers.get("Retry-After", 1)) + 1, 3)
                     logger.warning(f"  S2 rate-limited (429). Waiting {wait}s before retry {attempt + 1}/{retries}...")
                     time.sleep(wait)
                     continue

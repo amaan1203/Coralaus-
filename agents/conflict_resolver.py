@@ -413,8 +413,10 @@ CRITICAL SYSTEM RULE: If you select a bare-metal OS image like nvidia/cuda or ub
     return dockerfile
 
 
-def _resolve_requirements(client, requirements: str, conflicts: list, rag_dockerfiles: list = None, flare_contexts: list = None) -> dict:
+def _resolve_requirements(client, requirements: str, conflicts: list, rag_dockerfiles: list = None, flare_contexts: list = None, repo_year: str = None) -> dict:
     """Resolve version conflicts in requirements using Groq and reference RAG context."""
+    import re
+
     if not conflicts:
         return {"requirements": requirements, "notes": ["No conflicts to resolve"]}
 
@@ -430,16 +432,43 @@ def _resolve_requirements(client, requirements: str, conflicts: list, rag_docker
         for ctx in flare_contexts:
             reference_context += f"- {ctx}\n"
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a Python dependency expert. Return only valid JSON, no markdown.",
-            },
-            {
-                "role": "user",
-                "content": f"""Fix these Python dependency conflicts.
+    temporal_rule = ""
+    if repo_year:
+        temporal_rule = f"CRITICAL: This code is from {repo_year}. Pin packages to versions standard in {repo_year}. Do NOT upgrade to modern versions."
+
+    def _try_parse(raw: str):
+        """Try to parse, with a pre-repair step for Python implicit string concatenation."""
+        raw = raw.strip()
+        # Direct parse
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+        # Repair: collapse Python-style implicit string concat  "foo\n"   "bar\n" -> "foo\nbar\n"
+        repaired = re.sub(r'"\s*\n\s*"', '', raw)
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
+        # Extract outermost { ... } block (handles leading/trailing garbage)
+        m = re.search(r'\{.*\}', repaired, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    # Shared system message explicitly forbidding Python implicit string concat
+    system_msg = (
+        "You are a Python dependency expert. Return ONLY valid JSON — no markdown, no code fences, "
+        "no extra text. CRITICAL: The 'requirements' field MUST be a single JSON string. "
+        "Separate packages using the literal escape sequence \\n inside the string. "
+        "NEVER split the string across multiple lines using Python-style implicit concatenation "
+        "(e.g. writing \"pkg1\\n\" \"pkg2\\n\" is INVALID JSON and will cause an error)."
+    )
+
+    user_msg = f"""Fix these Python dependency conflicts. {temporal_rule}
 
 Original requirements.txt:
 {requirements[:3000]}
@@ -448,22 +477,62 @@ Conflicts:
 {json.dumps(conflicts[:10], indent=2)}
 {reference_context}
 
-Return JSON:
+Return a JSON object with exactly these two keys:
 {{
-  "requirements": "fixed requirements.txt content with pinned versions, including any required -f / --find-links flags if necessary based on reference contexts",
+  "requirements": "all packages as a SINGLE string, separated by \\n escape sequences",
   "notes": ["explanation of each change made"]
-}}""",
-            },
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.1,
-        max_tokens=2048,
-    )
+}}
 
+Example of correct 'requirements' format: "numpy==1.24.2\\nopencv-python==4.7.0\\ntorch==2.0.1"
+DO NOT write the packages on separate lines inside the JSON string."""
+
+    # --- First attempt (wrapped so HTTP 400 triggers retry, not outer fallback) ---
     try:
-        return json.loads(response.choices[0].message.content)
-    except json.JSONDecodeError:
-        return {"requirements": requirements, "notes": ["Failed to parse LLM response"]}
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            max_tokens=2048,
+        )
+        result = _try_parse(response.choices[0].message.content)
+        if result is not None:
+            return result
+        logger.warning("_resolve_requirements: first response unparseable after repair, retrying...")
+    except Exception as e:
+        # Catches HTTP 400 json_validate_failed as well as network errors
+        logger.warning(f"_resolve_requirements: first LLM call failed ({e}), retrying with stricter prompt...")
+
+    # --- Retry with temperature=0 and a concrete example in the prompt ---
+    retry_user_msg = (
+        f"Return ONLY a JSON object. The 'requirements' value must be a SINGLE string "
+        f"with packages joined by the escape sequence \\n.\n\n"
+        f"Correct example:\n"
+        f'  {{"requirements": "numpy==1.24.2\\nopencv-python==4.7.0\\ntorch==2.0.1", "notes": ["pinned versions"]}}\n\n'
+        f"Fix the following:\nRequirements:\n{requirements[:2000]}\n\nConflicts:\n{json.dumps(conflicts[:5])}"
+    )
+    try:
+        retry_response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": retry_user_msg},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=1024,
+        )
+        result = _try_parse(retry_response.choices[0].message.content)
+        if result is not None:
+            return result
+        logger.error(f"_resolve_requirements retry also unparseable")
+    except Exception as e:
+        logger.error(f"_resolve_requirements retry also failed: {e}")
+
+    return {"requirements": requirements, "notes": ["Failed to parse LLM response — using original requirements"]}
 
 
 def _basic_dockerfile(requirements_content: str, paper_title: str = "", entrypoint: str = None) -> dict:

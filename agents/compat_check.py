@@ -135,7 +135,7 @@ def _fetch_dep_files_coral(owner: str, repo: str) -> dict:
         return {}
 
     dep_files = {}
-    # Check root-level files (including 'requirement.txt' without 's')
+    # Step 1: Check root-level standard filenames with exact path= queries
     for filename in ['requirements.txt', 'requirement.txt', 'environment.yml', 'setup.py', 'pyproject.toml']:
         result = coral.sql(f"""
             SELECT content_text as content
@@ -148,6 +148,43 @@ def _fetch_dep_files_coral(owner: str, repo: str) -> dict:
             content = result["results"][0].get("content")
             if content:
                 dep_files[filename] = content
+
+    # Step 2: If no requirements file found at root, search entire tree for any *requirement*.txt
+    # This catches subdirectory files and non-standard naming (e.g. requirements_train.txt)
+    if not any(k for k in dep_files if 'requirement' in k.lower() and k.endswith('.txt')):
+        logger.info(f"No requirements at root for {owner}/{repo}. Searching full tree via github.trees...")
+        try:
+            tree_result = coral.sql(f"""
+                SELECT path
+                FROM github.trees
+                WHERE owner = '{owner}'
+                  AND repo = '{repo}'
+                  AND tree_sha = 'HEAD'
+                  AND recursive = 'true'
+                  AND type = 'blob'
+                  AND path LIKE '%requirement%'
+            """)
+            if tree_result and "results" in tree_result and tree_result["results"]:
+                found_paths = [
+                    item.get("path") for item in tree_result["results"]
+                    if item.get("path", "").endswith(".txt")
+                ]
+                logger.info(f"github.trees found requirement files: {found_paths}")
+                for path in found_paths[:3]:  # limit to avoid rate limits
+                    content_result = coral.sql(f"""
+                        SELECT content_text as content
+                        FROM github.contents
+                        WHERE owner = '{owner}'
+                          AND repo = '{repo}'
+                          AND path = '{path}'
+                    """)
+                    if content_result and "results" in content_result and content_result["results"]:
+                        content = content_result["results"][0].get("content")
+                        if content:
+                            dep_files[path] = content
+                            logger.info(f"Fetched {path} from tree search ({len(content)} bytes)")
+        except Exception as e:
+            logger.debug(f"Coral tree search for requirements failed: {e}")
 
     return dep_files
 
@@ -355,21 +392,19 @@ def _detect_entrypoint(owner: str, repo: str) -> str:
 
     coral = get_coral_client()
     if coral.available:
-        candidate_list = ", ".join(f"'{c}'" for c in candidates)
-        result = coral.sql(f"""
-            SELECT path
-            FROM github.contents
-            WHERE owner = '{owner}'
-              AND repo = '{repo}'
-              AND path IN ({candidate_list})
-        """)
-        if result and "results" in result:
-            found_files = [r.get("path", "") for r in result["results"]]
-            # Return the highest-priority match
-            for candidate in candidates:
-                if candidate in found_files:
-                    logger.info(f"Detected entrypoint via Coral: {candidate}")
-                    return candidate
+        # github.contents requires WHERE path = <constant> — IN (...) is NOT supported
+        # Query each candidate individually and stop at the first hit
+        for candidate in candidates:
+            result = coral.sql(f"""
+                SELECT path
+                FROM github.contents
+                WHERE owner = '{owner}'
+                  AND repo = '{repo}'
+                  AND path = '{candidate}'
+            """)
+            if result and "results" in result and result["results"]:
+                logger.info(f"Detected entrypoint via Coral: {candidate}")
+                return candidate
 
     # Fallback: check via GitHub API
     try:
