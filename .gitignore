@@ -13,7 +13,14 @@ dist/
 build/
 
 # Output artifacts (generated at runtime)
-output/
+output
+output\current_paper.json
+output\Dockerfile
+output\requirements_resolved.txt
+output\result.json
+output\requirements_resolved.txt
+sample_papers
+scripts\output
 
 # IDE
 .vscode/
@@ -27,8 +34,6 @@ coral-x86_64-pc-windows-msvc.zip
 coral/
 coral/coral.exe
 .env
-current_page.json
-Dockerfile
 output/
 package.json
 package-lock.json

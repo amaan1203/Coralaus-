@@ -15,6 +15,11 @@ import json
 import logging
 import time
 
+import io
+if sys.platform.startswith("win"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -76,13 +81,38 @@ def run_full_pipeline(pdf_path: str = None):
     search_result = search_implementation(paper_json)
     print(f"  Implementation found: {search_result['found']}")
     if search_result['found']:
-        print(f"   Repo: {search_result['repo_url']}")
-        print(f"   Method: {search_result.get('search_method')}")
+        print(f"   Candidates discovered: {len(search_result.get('candidates', []))}")
 
     health_result = None
     compat_result = None
     resolver_result = None
     generator_result = None
+
+    if search_result['found'] and search_result.get("candidates"):
+        # --- Component 2.5: Repository Validation ---
+        print("\n Component 2.5: Repository Validator & Ranker")
+        print("-" * 40)
+        from agents.repo_validator import validate_and_rank_candidates
+        best_match, ranked_results = validate_and_rank_candidates(paper_json, search_result["candidates"])
+
+        print("  Evaluated Candidates:")
+        for idx, val in enumerate(ranked_results):
+            print(f"   #{idx+1}: {val['repo_url']} | Conf: {val['confidence_score']:.1%} | Class: {val['classification']}")
+
+        print(f"\n   🏆 Selected Best Repo: {best_match['repo_url']}")
+        print(f"   Confidence Score: {best_match['confidence_score']:.1%} ({best_match['classification']})")
+
+        if best_match["confidence_score"] < 0.20:
+            print("  ⚠️ Score below 20%. Rejecting match and forcing scratch generation!")
+            search_result["found"] = False
+            search_result["repo_url"] = None
+            search_result["validation"] = best_match
+        else:
+            search_result["repo_url"] = best_match["repo_url"]
+            search_result["stars"] = best_match.get("stars", 0)
+            search_result["is_official"] = best_match.get("is_official", False)
+            search_result["search_method"] = best_match.get("search_method")
+            search_result["validation"] = best_match
 
     if search_result['found']:
         # --- Component 3: Repo Health ---

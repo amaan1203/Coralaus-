@@ -301,7 +301,7 @@ def _pip_dry_run(requirements_content: str) -> dict:
         # Run pip dry-run
         proc = subprocess.run(
             ["pip", "install", "--dry-run", "-r", tmp_path],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, encoding="utf-8", timeout=60
         )
 
         result["raw_output"] = proc.stderr + proc.stdout

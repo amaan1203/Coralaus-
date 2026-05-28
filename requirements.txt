@@ -2,6 +2,7 @@
 streamlit>=1.28.0
 requests>=2.31.0
 python-dotenv>=1.0.0
+torchvision
 
 # PDF Parsing
 beautifulsoup4>=4.12.0
@@ -15,6 +16,9 @@ sentence-transformers>=2.2.0   # repo_validator: embedding similarity for title 
 # LLM Providers
 google-generativeai>=0.3.0
 groq>=0.4.0
+
+# Repository Validator
+sentence-transformers>=2.2.0
 
 # Semantic Scholar API (replaces dead PapersWithCode MCP)
 # No extra package needed — uses requests (already listed above)

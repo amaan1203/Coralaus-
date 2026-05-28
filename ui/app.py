@@ -29,6 +29,9 @@ from agents.repo_validator import validate_repo_relevance, format_relevance_badg
 from agents.dockerfile_validator import validate_dockerfile, format_validation_summary
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -315,11 +318,8 @@ if uploaded_file:
             st.session_state.pwc_calls = pwc.get_call_count()
 
             if search_result["found"]:
-                st.write(f"**Found:** {search_result['repo_url']}")
-                st.write(f"**Stars:** ⭐ {search_result.get('stars', 'N/A')}")
-                st.write(f"**Official:** {'Yes' if search_result.get('is_official') else 'No'}")
-                st.write(f"**Method:** {search_result.get('search_method', 'N/A')}")
-                status.update(label="Component 2: Implementation found!", state="complete")
+                st.write(f"**Discovered candidates:** {len(search_result.get('candidates', []))}")
+                status.update(label=f"Component 2: Found {len(search_result.get('candidates', []))} repo candidates", state="complete")
             else:
                 st.write("No implementation found on PapersWithCode")
                 status.update(label="Component 2: No implementation found", state="complete")
@@ -330,6 +330,40 @@ if uploaded_file:
         generator_result = None
         relevance_result = None
         dockerfile_validation_result = None
+
+        if search_result["found"] and search_result.get("candidates"):
+            # === Component 2.5: Repository Match Validation ===
+            with st.status("✅ Component 2.5: Validating repository matches...", expanded=True) as status:
+                from agents.repo_validator import validate_and_rank_candidates
+                best_match, ranked_results = validate_and_rank_candidates(paper_json, search_result["candidates"])
+
+                # Let's display candidates in a clean layout
+                with st.expander("🔍 View All Candidate Repositories Evaluated", expanded=False):
+                    for idx, val in enumerate(ranked_results):
+                        st.markdown(f"**Candidate #{idx+1}:** [{val['repo_url']}]({val['repo_url']})")
+                        st.markdown(f"  * Method: `{val.get('search_method', 'N/A')}` | Stars: ⭐ {val.get('stars', 0)}")
+                        st.markdown(f"  * Confidence: **{val['confidence_score']:.1%}** ({val['classification']})")
+                        st.divider()
+
+                st.markdown(f"🏆 **Selected Primary Repo:** `{best_match['repo_url']}`")
+                st.write(f"Confidence score: **{best_match['confidence_score']:.1%}**")
+                st.write(f"Classification: **{best_match['classification']}**")
+
+                # If the score is too low, treat as mismatch to trigger from-scratch generation path
+                if best_match["confidence_score"] < 0.20:
+                    st.warning("⚠️ Highest match confidence is below 20%. Treating as a MISMATCH. Will generate reference code from scratch.")
+                    search_result["found"] = False
+                    search_result["repo_url"] = None
+                    search_result["validation"] = best_match
+                    status.update(label="✅ Component 2.5: All candidates mismatch", state="complete")
+                else:
+                    search_result["repo_url"] = best_match["repo_url"]
+                    search_result["stars"] = best_match.get("stars", 0)
+                    search_result["is_official"] = best_match.get("is_official", False)
+                    search_result["search_method"] = best_match.get("search_method")
+                    search_result["validation"] = best_match
+
+                    status.update(label=f"✅ Component 2.5: {best_match['classification']} ({best_match['confidence_score']:.1%})", state="complete")
 
         if search_result["found"]:
             # === Component 2b: Repo Relevance Check ===

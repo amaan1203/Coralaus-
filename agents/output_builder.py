@@ -52,6 +52,14 @@ def build_output(
     implementation_found = search_result.get("found", False) if search_result else False
     generated_from_scratch = generator_result is not None and not implementation_found
 
+    validation_data = search_result.get("validation") if search_result else None
+    if not validation_data:
+        validation_data = {
+            "confidence_score": 0.0,
+            "classification": "UNKNOWN",
+            "validator_scores": {}
+        }
+
     # Build the output
     output = {
         # Paper metadata
@@ -68,6 +76,7 @@ def build_output(
         "implementation_found": implementation_found,
         "repo_url": search_result.get("repo_url") if search_result else None,
         "search_method": search_result.get("search_method") if search_result else None,
+        "validation": validation_data,
 
         # Health check
         "repo_health_score": health_result.get("health_score", -1) if health_result else -1,
@@ -156,19 +165,9 @@ def format_summary(output: dict) -> str:
     if output["implementation_found"]:
         lines.append(f"✅ Implementation found: {output['repo_url']}")
         lines.append(f"   Search method: {output.get('search_method', 'N/A')}")
-
-        # Repo relevance badge
-        rel = output.get("repo_relevance", {})
-        if rel and rel.get("relevance_score") is not None:
-            verdict = rel.get('verdict', 'unknown')
-            score = rel.get('relevance_score', 0)
-            if verdict == 'relevant':
-                lines.append(f"   Relevance: 🎯 Confirmed relevant ({score}/100)")
-            elif verdict == 'possibly_irrelevant':
-                lines.append(f"   Relevance: ⚠️  Possibly irrelevant ({score}/100)")
-            else:
-                lines.append(f"   Relevance: ❌ Likely irrelevant ({score}/100)")
-
+        val = output.get("validation", {})
+        if val and val.get("classification") != "UNKNOWN":
+            lines.append(f"   Validation: {val.get('classification')} ({val.get('confidence_score', 0.0):.1%})")
         lines.append(f"   Health: {output['health_emoji']} {output['health_label']} ({output['repo_health_score']}/100)")
 
         signals = output.get("health_signals", {})

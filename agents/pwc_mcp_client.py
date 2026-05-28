@@ -90,13 +90,13 @@ class SemanticScholarClient:
     def search_papers(self, query: str, items_per_page: int = 5) -> list[dict]:
         """Search for papers by title or keyword."""
         self.call_count += 1
-        logger.info(f"[S2 #{self.call_count}] Searching papers: '{query[:80]}'")
+        logger.debug(f"[S2 #{self.call_count}] Searching papers: '{query[:80]}'")
 
         # Check cache first to avoid rate-limited API call
         cache = _load_cache()
         key = _cache_key(query)
         if key in cache:
-            logger.info(f"  S2 cache hit for '{query[:60]}'")
+            logger.debug(f"  S2 cache hit for '{query[:60]}'")
             return cache[key]
 
         resp = self._get(
@@ -107,7 +107,7 @@ class SemanticScholarClient:
             return []
         if resp.status_code == 200:
             results = resp.json().get("data", [])
-            logger.info(f"  Found {len(results)} papers")
+            logger.debug(f"  Found {len(results)} papers")
             normalized = [self._normalize_paper(p) for p in results]
             cache[key] = normalized
             _save_cache(cache)
@@ -119,7 +119,7 @@ class SemanticScholarClient:
     def get_paper_by_arxiv_id(self, arxiv_id: str) -> Optional[dict]:
         """Look up a specific paper by its arXiv ID."""
         self.call_count += 1
-        logger.info(f"[S2 #{self.call_count}] Looking up arXiv:{arxiv_id}")
+        logger.debug(f"[S2 #{self.call_count}] Looking up arXiv:{arxiv_id}")
 
         resp = self._get(
             f"{self.S2_API_BASE}/paper/arXiv:{arxiv_id}",
@@ -129,10 +129,10 @@ class SemanticScholarClient:
             return None
         if resp.status_code == 200:
             paper = resp.json()
-            logger.info(f"  Found: {paper.get('title', 'Unknown')}")
+            logger.debug(f"  Found: {paper.get('title', 'Unknown')}")
             return self._normalize_paper(paper)
         elif resp.status_code == 404:
-            logger.info(f"  Paper arXiv:{arxiv_id} not found in Semantic Scholar")
+            logger.debug(f"  Paper arXiv:{arxiv_id} not found in Semantic Scholar")
             return None
         else:
             logger.error(f"  S2 lookup error: {resp.status_code} — {resp.text[:200]}")
@@ -156,14 +156,14 @@ class SemanticScholarClient:
 
         # Strategy 1: HF Papers API — official link from authors' abstract
         self.call_count += 1
-        logger.info(f"[HF #{self.call_count}] Checking HF Papers API for official repo: {paper_id}")
+        logger.debug(f"[HF #{self.call_count}] Checking HF Papers API for official repo: {paper_id}")
         official = self._get_official_repo_from_hf(paper_id)
         if official:
             return [official]
 
         # Strategy 2: GitHub search fallback
         self.call_count += 1
-        logger.info(f"[S2 #{self.call_count}] No official repo found — falling back to GitHub search: {paper_id}")
+        logger.debug(f"[S2 #{self.call_count}] No official repo found — falling back to GitHub search: {paper_id}")
         repos = self._search_github(f'"{paper_id}" language:python')
         if not repos:
             repos = self._search_github(f'"{paper_id}"')
@@ -247,7 +247,7 @@ class SemanticScholarClient:
                 summary = data.get("summary", "")
                 github_url = self._extract_github_url(summary)
                 if github_url:
-                    logger.info(f"  Official repo found in HF Papers abstract: {github_url}")
+                    logger.debug(f"  Official repo found in HF Papers abstract: {github_url}")
                     return {
                         "url": github_url,
                         "stars": 0,  # not available from this source
@@ -255,9 +255,9 @@ class SemanticScholarClient:
                         "is_official": True,
                     }
                 else:
-                    logger.info(f"  HF Papers: paper found but no GitHub URL in abstract")
+                    logger.debug(f"  HF Papers: paper found but no GitHub URL in abstract")
             elif resp.status_code == 404:
-                logger.info(f"  HF Papers: paper {arxiv_id} not indexed")
+                logger.debug(f"  HF Papers: paper {arxiv_id} not indexed")
             else:
                 logger.warning(f"  HF Papers API error: {resp.status_code}")
         except Exception as e:
@@ -292,7 +292,7 @@ class SemanticScholarClient:
             )
             if resp.status_code == 200:
                 items = resp.json().get("items", [])
-                logger.info(f"  GitHub search returned {len(items)} repos for: {query[:60]}")
+                logger.debug(f"  GitHub search returned {len(items)} repos for: {query[:60]}")
                 return [self._normalize_github_repo(r) for r in items]
             else:
                 logger.error(f"  GitHub search error: {resp.status_code}")
