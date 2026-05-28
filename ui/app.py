@@ -25,8 +25,6 @@ from agents.no_impl_generator import generate_from_scratch
 from agents.output_builder import build_output, save_output, format_summary
 from agents.coral_utils import get_coral_client
 from agents.pwc_mcp_client import get_s2_client
-from agents.repo_validator import validate_repo_relevance, format_relevance_badge
-from agents.dockerfile_validator import validate_dockerfile, format_validation_summary
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -328,8 +326,6 @@ if uploaded_file:
         compat_result = None
         resolver_result = None
         generator_result = None
-        relevance_result = None
-        dockerfile_validation_result = None
 
         if search_result["found"] and search_result.get("candidates"):
             # === Component 2.5: Repository Match Validation ===
@@ -366,36 +362,6 @@ if uploaded_file:
                     status.update(label=f"✅ Component 2.5: {best_match['classification']} ({best_match['confidence_score']:.1%})", state="complete")
 
         if search_result["found"]:
-            # === Component 2b: Repo Relevance Check ===
-            with st.status("🎯 Component 2b: Validating repo relevance...", expanded=True) as status:
-                relevance_result = validate_repo_relevance(
-                    search_result["repo_url"], paper_json
-                )
-                verdict = relevance_result.get("verdict", "unknown")
-                score = relevance_result.get("relevance_score", 0)
-
-                if verdict == "relevant":
-                    st.markdown(f'<div class="health-badge health-green">🎯 Relevant — {score}/100</div>', unsafe_allow_html=True)
-                elif verdict == "possibly_irrelevant":
-                    st.markdown(f'<div class="health-badge health-yellow">⚠️ Possibly Irrelevant — {score}/100</div>', unsafe_allow_html=True)
-                    st.warning("This repo may not be the actual implementation of this paper. It could be a similar-topic repo.")
-                else:
-                    st.markdown(f'<div class="health-badge health-red">❌ Likely Irrelevant — {score}/100</div>', unsafe_allow_html=True)
-                    st.error("This repo is likely NOT the implementation of this paper. It may be a similar-topic repo from a different paper.")
-
-                # Show evidence
-                if relevance_result.get("evidence"):
-                    for ev in relevance_result["evidence"]:
-                        st.write(f"✅ {ev}")
-                if relevance_result.get("warnings"):
-                    for w in relevance_result["warnings"]:
-                        st.write(f"⚠️ {w}")
-
-                status.update(
-                    label=f"✅ Component 2b: {format_relevance_badge(relevance_result)}",
-                    state="complete",
-                )
-
             # === Component 3: Repo Health Check ===
             with st.status("🏥 Component 3: Checking repo health via Coral GitHub...", expanded=True) as status:
                 health_result = check_repo_health(search_result["repo_url"])
@@ -485,48 +451,6 @@ if uploaded_file:
                         repo_year=health_result.get("signals", {}).get("year") if health_result else None,
                     )
 
-            # === Component 5b: Dockerfile Validation ===
-            dockerfile_content = None
-            requirements_content = ""
-            if resolver_result and resolver_result.get("dockerfile"):
-                dockerfile_content = resolver_result["dockerfile"]
-                requirements_content = resolver_result.get("resolved_requirements", "")
-
-            if dockerfile_content:
-                with st.status("🔍 Component 5b: Validating Dockerfile...", expanded=True) as status:
-                    dockerfile_validation_result = validate_dockerfile(
-                        dockerfile_content, requirements_content
-                    )
-
-                    val = dockerfile_validation_result
-                    if val["valid"] and not val["warnings"]:
-                        st.markdown('<div class="health-badge health-green">✅ Dockerfile Valid</div>', unsafe_allow_html=True)
-                    elif val["valid"]:
-                        st.markdown(f'<div class="health-badge health-yellow">⚠️ Valid with {len(val["warnings"])} warning(s)</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<div class="health-badge health-red">❌ {len(val["issues"])} issue(s) found</div>', unsafe_allow_html=True)
-
-                    if val.get("base_image"):
-                        fresh_badge = "✅ fresh" if val.get("base_image_fresh") else "⚠️ outdated"
-                        st.write(f"**Base image:** `{val['base_image']}` ({fresh_badge})")
-                        if val.get("base_image_eol_reason"):
-                            st.warning(val["base_image_eol_reason"])
-
-                    if val.get("issues"):
-                        st.write("**Issues (blocking):**")
-                        for issue in val["issues"]:
-                            st.write(f"❌ {issue}")
-
-                    if val.get("warnings"):
-                        with st.expander(f"View {len(val['warnings'])} warning(s)"):
-                            for warning in val["warnings"]:
-                                st.write(f"⚠️ {warning}")
-
-                    status.update(
-                        label=f"✅ Component 5b: {format_validation_summary(val)}",
-                        state="complete",
-                    )
-
         else:
             # === Component 6: Generate from Scratch ===
             with st.status("🔨 Component 6: Generating implementation from scratch...", expanded=True) as status:
@@ -555,8 +479,6 @@ if uploaded_file:
                 generator_result=generator_result,
                 coral_queries_total=coral.get_query_count(),
                 llm_calls=total_llm_calls,
-                dockerfile_validation=dockerfile_validation_result,
-                repo_relevance=relevance_result,
             )
             saved = save_output(final_output)
 
