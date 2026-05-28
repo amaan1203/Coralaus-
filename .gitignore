@@ -37,3 +37,4 @@ coral/coral.exe
 output/
 package.json
 package-lock.json
+coro/

@@ -25,6 +25,8 @@ def build_output(
     generator_result: dict = None,
     coral_queries_total: int = 0,
     llm_calls: dict = None,
+    dockerfile_validation: dict = None,
+    repo_relevance: dict = None,
 ) -> dict:
     """
     Assemble the final structured output from all component results.
@@ -38,6 +40,8 @@ def build_output(
         generator_result: From-scratch generation from Component 6
         coral_queries_total: Total Coral queries used
         llm_calls: Dict of LLM call counts by provider
+        dockerfile_validation: Dockerfile validation result from Component 5b
+        repo_relevance: Repo relevance validation from Component 2b
 
     Returns:
         Complete output dict ready for UI display and JSON export
@@ -94,6 +98,12 @@ def build_output(
         "generated_from_scratch": generated_from_scratch,
         "keyterms": generator_result.get("keyterms", []) if generator_result else [],
         "related_repos": generator_result.get("related_repos", []) if generator_result else [],
+
+        # Dockerfile validation (Component 5b)
+        "dockerfile_validation": _safe_validation(dockerfile_validation),
+
+        # Repo relevance (Component 2b)
+        "repo_relevance": _safe_relevance(repo_relevance),
 
         # Stats for demo
         "coral_queries_used": coral_queries_total,
@@ -174,6 +184,22 @@ def format_summary(output: dict) -> str:
                 lines.append("   ✅ Conflicts resolved — Dockerfile generated")
         else:
             lines.append("\n✅ No dependency conflicts")
+
+        # Dockerfile validation summary
+        df_val = output.get("dockerfile_validation", {})
+        if df_val:
+            issues = df_val.get('issues', [])
+            warnings = df_val.get('warnings', [])
+            if df_val.get('valid') and not warnings:
+                lines.append("\n🐳 Dockerfile: ✅ Valid")
+            elif df_val.get('valid'):
+                lines.append(f"\n🐳 Dockerfile: ⚠️  Valid with {len(warnings)} warning(s)")
+            else:
+                lines.append(f"\n🐳 Dockerfile: ❌ {len(issues)} issue(s)")
+            if df_val.get('base_image'):
+                fresh = '✅ fresh' if df_val.get('base_image_fresh') else '⚠️  outdated'
+                lines.append(f"   Base image: {df_val['base_image']} ({fresh})")
+
     else:
         lines.append("❌ No existing implementation found")
         if output["generated_from_scratch"]:
@@ -213,6 +239,34 @@ def _get_dockerfile(resolver_result: dict = None, generator_result: dict = None)
     if generator_result and generator_result.get("dockerfile"):
         return generator_result["dockerfile"]
     return None
+
+
+def _safe_validation(dockerfile_validation: dict = None) -> dict:
+    """Return a safe copy of dockerfile validation, or empty dict."""
+    if not dockerfile_validation:
+        return {}
+    return {
+        "valid": dockerfile_validation.get("valid", False),
+        "issues": dockerfile_validation.get("issues", []),
+        "warnings": dockerfile_validation.get("warnings", []),
+        "base_image": dockerfile_validation.get("base_image", ""),
+        "base_image_fresh": dockerfile_validation.get("base_image_fresh"),
+        "base_image_eol_reason": dockerfile_validation.get("base_image_eol_reason", ""),
+        "checks_run": dockerfile_validation.get("checks_run", []),
+    }
+
+
+def _safe_relevance(repo_relevance: dict = None) -> dict:
+    """Return a safe copy of repo relevance, or empty dict."""
+    if not repo_relevance:
+        return {}
+    return {
+        "relevance_score": repo_relevance.get("relevance_score", 0),
+        "verdict": repo_relevance.get("verdict", "irrelevant"),
+        "evidence": repo_relevance.get("evidence", []),
+        "warnings": repo_relevance.get("warnings", []),
+        "checks_run": repo_relevance.get("checks_run", []),
+    }
 
 
 if __name__ == "__main__":

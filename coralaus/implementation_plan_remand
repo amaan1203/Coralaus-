@@ -1,0 +1,153 @@
+# Implementation Plan: Dockerfile Validation + Repo Relevance Validator
+
+## Overview
+
+Two distinct improvements to the Coralaus pipeline:
+
+1. **Dockerfile Validation Pipeline** — After generating a Dockerfile for each `sample_papers` PDF, run structural checks (linting, base image freshness, conflict detection) and then attempt a real `docker build` on one of them to verify correctness end-to-end.
+
+2. **Repo Relevance Validator** — After `search_implementation` returns a GitHub repo, verify that the repo is actually implementing *this specific paper* (not just a repo with a similar topic) by cross-checking repo content against the paper's key identifiers (arXiv ID, title, authors, abstract keywords).
+
+---
+
+## Feature 1: Dockerfile Validation
+
+### What the checks do
+
+| Check | How |
+|---|---|
+| **Syntax lint** | Parse Dockerfile with regex rules — catch missing `FROM`, invalid `RUN` chains, bare OS images without Python setup, etc. |
+| **Base image freshness** | Query Docker Hub API to check if the specified base image tag is deprecated / EOL (e.g. `python:3.8-slim` is old; `cuda:10.0` is gone) |
+| **No-conflict base** | Flag mismatches like `python:3.11-slim` + PyTorch install requiring CUDA (incompatible CPU-only base for GPU workloads) |
+| **Build verification** | Perform actual `docker build` for **one** representative Dockerfile to confirm it builds without errors |
+
+### Workflow
+
+```
+For each sample_paper PDF:
+  1. Run full pipeline (ingest → search → compat → conflict_resolver) → get Dockerfile
+  2. Run validate_dockerfile(dockerfile_str) → structural checks + base image API check
+  3. Collect all validation results
+
+Then for ONE sample paper (most-likely-to-succeed):
+  4. Write Dockerfile + requirements to temp dir
+  5. Run `docker build` and capture output
+  6. Report pass/fail + build log snippet
+```
+
+### New file: `agents/dockerfile_validator.py`
+
+```python
+def validate_dockerfile(dockerfile_str: str) -> dict:
+    # Returns: {valid: bool, issues: [], warnings: [], base_image: str, base_image_fresh: bool}
+
+def check_base_image_freshness(image_tag: str) -> dict:
+    # Queries Docker Hub API / checks known EOL list
+
+def build_dockerfile_test(dockerfile_str: str, requirements_str: str = "") -> dict:
+    # Writes temp Dockerfile, runs docker build, returns {success, log, duration_s}
+```
+
+### New script: `scripts/validate_all_sample_papers.py`
+
+Orchestrates the batch pipeline for all sample PDFs, runs validation on each Dockerfile, then triggers the build test on the best candidate.
+
+---
+
+## Feature 2: Repo Relevance Validator
+
+### The problem
+
+`search_implementation` may return a repo that:
+- Has the same topic area (e.g., "transformers") but implements a *different* paper
+- Has the arXiv ID mentioned in a README comment but isn't actually the paper's code
+- Is a popular framework that was returned due to keyword similarity
+
+### Validation signals
+
+| Signal | Score |
+|---|---|
+| arXiv ID found in repo README/description | +40 pts |
+| Paper title (fuzzy match ≥ 80%) in README | +30 pts |
+| Author names found in README/commits | +15 pts |
+| Paper keywords density in README | +10 pts |
+| Repo name contains paper acronym | +5 pts |
+| **Threshold: < 30 pts → flag as "possibly irrelevant"** | |
+
+### New file: `agents/repo_validator.py`
+
+```python
+def validate_repo_relevance(repo_url: str, paper_json: dict) -> dict:
+    """
+    Returns:
+        relevance_score: int (0-100)
+        verdict: "relevant" | "possibly_irrelevant" | "irrelevant"
+        evidence: list of matched signals
+        warnings: list of mismatch warnings
+    """
+```
+
+### Integration point
+
+- Called in `app.py` right after **Component 2** (implementation search), before Component 3 (health check)
+- Results surface in the UI as a new "🎯 Relevance Check" badge next to the repo URL
+- If score < 30, show a warning banner: *"⚠️ This repo may not be the actual implementation of this paper"*
+
+---
+
+## Proposed Changes
+
+### New Files
+
+#### [NEW] [dockerfile_validator.py](file:///c:/Users/Abhin/OneDrive/Desktop/Coralaus/agents/dockerfile_validator.py)
+- `validate_dockerfile(dockerfile_str)` — structural/syntax checks
+- `check_base_image_freshness(image_tag)` — Docker Hub API + known EOL list
+- `build_dockerfile_test(dockerfile_str, requirements_str)` — real `docker build`
+
+#### [NEW] [repo_validator.py](file:///c:/Users/Abhin/OneDrive/Desktop/Coralaus/agents/repo_validator.py)
+- `validate_repo_relevance(repo_url, paper_json)` — multi-signal relevance scoring
+
+#### [NEW] [validate_all_sample_papers.py](file:///c:/Users/Abhin/OneDrive/Desktop/Coralaus/scripts/validate_all_sample_papers.py)
+- Batch pipeline: run all sample_papers through ingest → resolve → Dockerfile gen → validate → build test
+
+---
+
+### Modified Files
+
+#### [MODIFY] [app.py](file:///c:/Users/Abhin/OneDrive/Desktop/Coralaus/ui/app.py)
+- After Component 2: add **Component 2b** Relevance Check step
+- Display relevance score badge + warning if low
+- Show Dockerfile validation results in Component 5 (alongside Dockerfile preview)
+
+#### [MODIFY] [output_builder.py](file:///c:/Users/Abhin/OneDrive/Desktop/Coralaus/agents/output_builder.py)
+- Add `dockerfile_validation` and `repo_relevance` fields to the output dict
+
+---
+
+## Open Questions
+
+> [!IMPORTANT]
+> **Docker availability**: The build test requires Docker to be installed and running locally. Should the build test be opt-in (run only when Docker is available, skip gracefully otherwise)?
+
+> [!IMPORTANT]
+> **Which sample paper to build?**: For the real `docker build` test, I plan to pick the sample paper that produces the *fewest Dockerfile validation issues* as the representative. Is this the right strategy, or should we always pick a specific one (e.g., BERT or LoRA)?
+
+> [!NOTE]
+> **Relevance threshold**: I set the "possibly irrelevant" threshold at 30/100. The score comes from: arXiv ID match (+40), title fuzzy match (+30), author names (+15), keyword density (+10), acronym match (+5). Let me know if you want to adjust.
+
+> [!NOTE]
+> **Docker Hub API**: Checking base image freshness uses the public Docker Hub API (no auth needed for public images). Known EOL tags (like `cuda:10.x`, `python:3.6`) are also hardcoded in a lookup table for offline fallback.
+
+---
+
+## Verification Plan
+
+### Automated
+- `python scripts/validate_all_sample_papers.py` — runs batch Dockerfile generation + validation report
+- `pytest scripts/test_repo_health.py` — existing health test suite still passes
+
+### Manual
+1. Run Streamlit app, upload a sample paper PDF (e.g., `LORA.pdf`)
+2. Verify the relevance badge appears after Component 2
+3. Verify Dockerfile validation issues/warnings appear in Component 5
+4. Run the batch script and check the build test passes for at least one paper
