@@ -375,15 +375,40 @@ if uploaded_file:
                 st.markdown(f'<div class="health-badge health-{health_class}">{emoji} {label} — {score}/100</div>', unsafe_allow_html=True)
 
                 signals = health_result.get("signals", {})
+
+                # Row 1: core signals
                 cols = st.columns(4)
                 with cols[0]:
                     st.metric("Last Commit", f"{signals.get('last_commit_days_ago', '?')}d ago")
                 with cols[1]:
-                    st.metric("Open Issues", signals.get("open_issues", "?"))
+                    open_i = signals.get("open_issues", "?")
+                    closed_i = signals.get("closed_issues")
+                    label = f"{open_i} open"
+                    delta = f"{closed_i} closed" if closed_i is not None else None
+                    st.metric("Issues", label, delta=delta, delta_color="off")
                 with cols[2]:
                     st.metric("Stars", signals.get("stars", "?"))
                 with cols[3]:
+                    st.metric("Forks", signals.get("forks", "?"))
+
+                # Row 2: quality signals
+                cols2 = st.columns(4)
+                with cols2[0]:
+                    age = signals.get("repo_age_days")
+                    stars = signals.get("stars") or 0
+                    if age and age > 30:
+                        vel = round(stars / max(1, age / 365), 1)
+                        st.metric("Star Velocity", f"{vel}/yr")
+                    else:
+                        st.metric("Star Velocity", "N/A")
+                with cols2[1]:
+                    count = signals.get("contributor_count")
+                    st.metric("Contributors", f"{count}+" if count == 30 else (count if count is not None else "?"))
+                with cols2[2]:
+                    st.metric("CI/CD", "✅ Yes" if signals.get("has_ci") else ("❌ No" if signals.get("has_ci") is False else "?"))
+                with cols2[3]:
                     st.metric("Archived", "Yes" if signals.get("archived") else "No")
+
 
                 status.update(label=f"✅ Component 3: Health {emoji} {score}/100", state="complete")
 
