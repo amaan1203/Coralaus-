@@ -18,138 +18,130 @@ logger = logging.getLogger(__name__)
 def search_implementation(paper_json: dict) -> dict:
     """
     Search Semantic Scholar + GitHub for implementations of the given paper.
+    Accumulates candidates using all search strategies to find at least 10 repositories,
+    including arXiv ID, title, keywords, direct GitHub search, and GitHub Code Search.
 
     Args:
         paper_json: Parsed paper JSON from Component 1
 
     Returns:
         Dict with:
-            - found (bool): Whether an implementation was found
-            - repo_url (str): GitHub repo URL
+            - found (bool): Whether any implementation was found
+            - repo_url (str): Best guess GitHub repo URL (highest priority fallback)
             - stars (int): Repo star count
             - framework (str): ML framework used
             - is_official (bool): Official implementation flag
             - paper_id (str): Semantic Scholar / arXiv paper ID
-            - search_method (str): How the repo was found
+            - search_method (str): How the primary repo was found
+            - candidates (list): List of unique candidates found across all strategies
     """
     title = paper_json.get("title", "")
     arxiv_id = paper_json.get("arxiv_id", "")
     pwc = get_s2_client()
 
-    result = {
-        "found": False,
-        "repo_url": None,
-        "stars": 0,
-        "framework": None,
-        "is_official": False,
-        "paper_id": None,
-        "search_method": None,
-    }
+    candidates = []
 
-    # Strategy 1: Search by arXiv ID (most precise)
+    def add_candidate(url, stars=0, framework=None, is_official=False, method=None):
+        if not url:
+            return
+        norm_url = url.rstrip("/").lower()
+        if norm_url.endswith(".git"):
+            norm_url = norm_url[:-4]
+        for c in candidates:
+            c_norm = c["repo_url"].rstrip("/").lower()
+            if c_norm.endswith(".git"):
+                c_norm = c_norm[:-4]
+            if c_norm == norm_url:
+                # Merge fields if the new ones have more information
+                if stars and not c["stars"]:
+                    c["stars"] = stars
+                if is_official and not c["is_official"]:
+                    c["is_official"] = True
+                return
+        candidates.append({
+            "repo_url": url,
+            "stars": stars or 0,
+            "framework": framework or _detect_framework(url),
+            "is_official": is_official,
+            "search_method": method,
+        })
+
+    paper_id = None
+
+    # Strategy 1: Search Semantic Scholar by arXiv ID (most precise)
     if arxiv_id:
         logger.info(f"Searching Semantic Scholar by arXiv ID: {arxiv_id}")
         paper = pwc.get_paper_by_arxiv_id(arxiv_id)
         if paper:
             paper_id = paper.get("id")
-            result["paper_id"] = paper_id
             repos = pwc.get_paper_repositories(paper_id) if paper_id else []
-            best = pwc._pick_best_repo(repos)
-            if best:
-                result.update({
-                    "found": True,
-                    "repo_url": best.get("url"),
-                    "stars": best.get("stars", 0),
-                    "framework": best.get("framework"),
-                    "is_official": best.get("is_official", False),
-                    "search_method": "arxiv_id",
-                })
-                logger.info(f"Found repo via arXiv ID: {result['repo_url']}")
-                return result
+            for r in repos:
+                add_candidate(
+                    url=r.get("url"),
+                    stars=r.get("stars", 0),
+                    framework=r.get("framework"),
+                    is_official=r.get("is_official", False),
+                    method="arxiv_id"
+                )
 
-    # Strategy 2: Search by title
+    # Strategy 2: Search Semantic Scholar by title
     if title:
         logger.info(f"Searching Semantic Scholar by title: '{title[:60]}'")
         papers = pwc.search_papers(title, items_per_page=5)
         for paper in papers:
-            paper_id = paper.get("id")
-            if paper_id:
-                repos = pwc.get_paper_repositories(paper_id)
-                best = pwc._pick_best_repo(repos)
-                if best:
-                    result.update({
-                        "found": True,
-                        "repo_url": best.get("url"),
-                        "stars": best.get("stars", 0),
-                        "framework": best.get("framework"),
-                        "is_official": best.get("is_official", False),
-                        "paper_id": paper_id,
-                        "search_method": "title",
-                    })
-                    logger.info(f"Found repo via title search: {result['repo_url']}")
-                    return result
+            p_id = paper.get("id")
+            if p_id:
+                if not paper_id:
+                    paper_id = p_id
+                repos = pwc.get_paper_repositories(p_id)
+                for r in repos:
+                    add_candidate(
+                        url=r.get("url"),
+                        stars=r.get("stars", 0),
+                        framework=r.get("framework"),
+                        is_official=r.get("is_official", False),
+                        method="title"
+                    )
 
-    # Strategy 3: Search with keywords from title
+    # Strategy 3: Search Semantic Scholar with keywords from title
     if title:
-        # Use first few significant words as search terms
         keywords = _extract_search_terms(title)
         if keywords:
             logger.info(f"Searching Semantic Scholar by keywords: '{keywords}'")
             papers = pwc.search_papers(keywords, items_per_page=3)
             for paper in papers:
-                paper_id = paper.get("id")
-                if paper_id:
-                    repos = pwc.get_paper_repositories(paper_id)
-                    best = pwc._pick_best_repo(repos)
-                    if best:
-                        result.update({
-                            "found": True,
-                            "repo_url": best.get("url"),
-                            "stars": best.get("stars", 0),
-                            "framework": best.get("framework"),
-                            "is_official": best.get("is_official", False),
-                            "paper_id": paper_id,
-                            "search_method": "keywords",
-                        })
-                        logger.info(f"Found repo via keyword search: {result['repo_url']}")
-                        return result
+                p_id = paper.get("id")
+                if p_id:
+                    repos = pwc.get_paper_repositories(p_id)
+                    for r in repos:
+                        add_candidate(
+                            url=r.get("url"),
+                            stars=r.get("stars", 0),
+                            framework=r.get("framework"),
+                            is_official=r.get("is_official", False),
+                            method="keywords"
+                        )
 
-    logger.info("No implementation found on Semantic Scholar. Trying direct GitHub search fallback...")
-
-    # Strategy 4: Check if the abstract/paper body mentions a GitHub URL directly
-    # This is the most authoritative signal — the authors link to their own code
+    # Strategy 4: Check if abstract/paper body mentions a GitHub URL directly
     abstract = paper_json.get("abstract", "")
     full_text = paper_json.get("full_text", "")
     mentioned_url = _extract_github_url(abstract) or _extract_github_url(full_text)
     if mentioned_url:
         logger.info(f"Found GitHub URL mentioned in paper: {mentioned_url}")
-        result.update({
-            "found": True,
-            "repo_url": mentioned_url,
-            "stars": 0,
-            "framework": None,
-            "is_official": True,
-            "search_method": "paper_body_url",
-        })
-        return result
+        add_candidate(url=mentioned_url, stars=0, is_official=True, method="paper_body_url")
 
     # Strategy 5: Direct GitHub search by arXiv ID
     if arxiv_id:
         logger.info(f"Searching GitHub directly for arXiv ID: {arxiv_id}")
-        repos = _search_github_repositories(f"\"{arxiv_id}\"")
-        if repos:
-            best = _pick_best_github_repo(repos, paper_json)
-            if best:
-                result.update({
-                    "found": True,
-                    "repo_url": best["html_url"],
-                    "stars": best.get("stargazers_count", best.get("stars", 0)) or 0,
-                    "framework": _detect_framework(best.get("description", "")),
-                    "is_official": best.get("_is_official", False),
-                    "search_method": "direct_github_arxiv_id",
-                })
-                logger.info(f"Found repo via direct GitHub arXiv ID search: {result['repo_url']}")
-                return result
+        repos = _search_github_repositories(f'"{arxiv_id}"')
+        for r in repos:
+            add_candidate(
+                url=r.get("html_url") or f"https://github.com/{r.get('full_name')}",
+                stars=r.get("stargazers_count", r.get("stars", 0)) or 0,
+                framework=_detect_framework(r.get("description", "")),
+                is_official=r.get("_is_official", False),
+                method="direct_github_arxiv_id"
+            )
 
     # Strategy 6: Direct GitHub search by paper title keywords
     if title:
@@ -157,22 +149,168 @@ def search_implementation(paper_json: dict) -> dict:
         if keywords:
             logger.info(f"Searching GitHub directly for title keywords: {keywords}")
             repos = _search_github_repositories(f"{keywords} language:python")
-            if repos:
-                best = _pick_best_github_repo(repos, paper_json)
-                if best:
-                    result.update({
-                        "found": True,
-                        "repo_url": best["html_url"],
-                        "stars": best.get("stargazers_count", best.get("stars", 0)) or 0,
-                        "framework": _detect_framework(best.get("description", "")),
-                        "is_official": best.get("_is_official", False),
-                        "search_method": "direct_github_title",
-                    })
-                    logger.info(f"Found repo via direct GitHub title search: {result['repo_url']}")
-                    return result
+            for r in repos:
+                add_candidate(
+                    url=r.get("html_url") or f"https://github.com/{r.get('full_name')}",
+                    stars=r.get("stargazers_count", r.get("stars", 0)) or 0,
+                    framework=_detect_framework(r.get("description", "")),
+                    is_official=r.get("_is_official", False),
+                    method="direct_github_title"
+                )
 
-    logger.info("No implementation found on Semantic Scholar or GitHub search")
+    # Strategy 7: Direct GitHub Code Search on .md files (NEW)
+    if arxiv_id or title:
+        logger.info("Searching GitHub Code (.md files) for arXiv ID / Title")
+        keywords = _extract_search_terms(title) if title else ""
+        repos = _search_github_code(arxiv_id, keywords)
+        for r in repos:
+            add_candidate(
+                url=r.get("html_url") or f"https://github.com/{r.get('full_name')}",
+                stars=r.get("stargazers_count", r.get("stars", 0)) or 0,
+                framework=_detect_framework(r.get("description", "")),
+                is_official=False,
+                method="direct_github_code"
+            )
+
+    # Prioritize the candidate list to choose a smart fallback best URL
+    def _rank_score(c):
+        score = c.get("stars", 0)
+        url = c.get("repo_url", "").lower()
+        if c.get("is_official"):
+            score += 100000
+
+        # Penalties
+        penalty_words = ["homework", "assignment", "coursework", "cs4", "cs2",
+                         "course", "class", "tutorial", "my-", "fork"]
+        for word in penalty_words:
+            if word in url:
+                score -= 50000
+
+        # Boost known ML orgs
+        known_orgs = ["microsoft", "google", "meta", "facebook", "openai",
+                      "huggingface", "pytorch", "tensorflow", "deepmind",
+                      "nvidia", "apple", "amazon", "aws"]
+        owner = url.split("github.com/")[-1].split("/")[0] if "github.com/" in url else ""
+        if owner in known_orgs:
+            score += 20000
+
+        return score
+
+    candidates.sort(key=_rank_score, reverse=True)
+
+    result = {
+        "found": len(candidates) > 0,
+        "repo_url": None,
+        "stars": 0,
+        "framework": None,
+        "is_official": False,
+        "paper_id": paper_id,
+        "search_method": None,
+        "candidates": candidates,
+    }
+
+    if candidates:
+        best = candidates[0]
+        result.update({
+            "repo_url": best["repo_url"],
+            "stars": best["stars"],
+            "framework": best["framework"],
+            "is_official": best["is_official"],
+            "search_method": best["search_method"],
+        })
+        logger.info(f"Total {len(candidates)} candidates accumulated. Default best candidate: {result['repo_url']} via {result['search_method']}")
+    else:
+        logger.info("No candidates found across Semantic Scholar or GitHub searches.")
+
     return result
+
+
+def _search_github_code(arxiv_id: str, title_keywords: str) -> list:
+    """
+    Search GitHub code specifically in .md files for the arXiv ID and/or title keywords.
+    Returns both the root repository and the specific subdirectory candidate (if matched in a subfolder).
+    """
+    import os
+    from agents.coral_utils import get_coral_client
+
+    coral = get_coral_client()
+    queries = []
+    
+    if arxiv_id:
+        queries.append(f'"{arxiv_id}" extension:md')
+    if title_keywords:
+        queries.append(f'{title_keywords} extension:md')
+
+    mapped = []
+    seen_urls = set()
+
+    def add_code_candidate(repo_full, path):
+        if not repo_full:
+            return
+        
+        main_url = f"https://github.com/{repo_full}"
+        if main_url.lower() not in seen_urls:
+            seen_urls.add(main_url.lower())
+            mapped.append({
+                "full_name": repo_full,
+                "html_url": main_url,
+                "stargazers_count": 0,
+                "description": f"Found via Code Search: {path}"
+            })
+
+        # Subdirectory logic: if path has subfolders, add a specific subdirectory URL
+        if "/" in path:
+            subdir_path = "/".join(path.split("/")[:-1])
+            if subdir_path:
+                subdir_url = f"https://github.com/{repo_full}/tree/master/{subdir_path}"
+                if subdir_url.lower() not in seen_urls:
+                    seen_urls.add(subdir_url.lower())
+                    mapped.append({
+                        "full_name": f"{repo_full}/{subdir_path}",
+                        "html_url": subdir_url,
+                        "stargazers_count": 0,
+                        "description": f"Found via Code Search Subdir: {path}"
+                    })
+
+    for query in queries:
+        # Coral code search
+        if coral.available:
+            try:
+                res = coral.sql(f"""
+                    SELECT repository_full_name, path
+                    FROM github.search_code(q => '{query}')
+                    LIMIT 8
+                """)
+                if res and "results" in res:
+                    for row in res["results"]:
+                        add_code_candidate(row.get("repository_full_name"), row.get("path"))
+            except Exception as e:
+                logger.debug(f"Coral code search failed for query '{query}': {e}")
+
+        # Fallback to GitHub REST API
+        import requests
+        headers = {}
+        token = os.environ.get("GITHUB_TOKEN")
+        if token and "dummy" not in token.lower() and "your_" not in token.lower():
+            headers["Authorization"] = f"token {token}"
+
+        try:
+            resp = requests.get(
+                "https://api.github.com/search/code",
+                params={"q": query, "per_page": 8},
+                headers=headers, timeout=10
+            )
+            if resp.status_code == 200:
+                items = resp.json().get("items", [])
+                for item in items:
+                    repo = item.get("repository", {})
+                    add_code_candidate(repo.get("full_name"), item.get("path"))
+            else:
+                logger.debug(f"GitHub code search API failed for query '{query}': status {resp.status_code}")
+        except Exception as e:
+            logger.debug(f"GitHub code search fallback failed for query '{query}': {e}")
+
+    return mapped
 
 
 def _search_github_repositories(query: str) -> list:
