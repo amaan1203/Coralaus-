@@ -53,7 +53,7 @@ def generate_from_scratch(paper_json: dict) -> dict:
     common_deps = []
 
     if coral.available and keyterms:
-        search_query = " ".join(keyterms[:3]) + " language:python"
+        search_query = " ".join(keyterms[:3]) + " language:python stars:>100 pushed:>2023-01-01"
         repo_result = coral.sql(f"""
             SELECT full_name, html_url, stargazers_count, description
             FROM github.search_repositories(q => '{search_query}')
@@ -84,8 +84,9 @@ def generate_from_scratch(paper_json: dict) -> dict:
                           AND (path LIKE '%requirements%'
                             OR path LIKE '%model%py'
                             OR path LIKE '%train%py'
-                            OR path LIKE '%environment%')
-                        LIMIT 5
+                            OR path LIKE '%environment%'
+                            OR path LIKE '%Dockerfile%')
+                        LIMIT 7
                     """)
                     coral_queries += 1
 
@@ -108,6 +109,11 @@ def generate_from_scratch(paper_json: dict) -> dict:
                                 if content:
                                     if "requirements" in path or "environment" in path:
                                         common_deps.append(f"# From {repo_name}/{path}\n{content[:500]}")
+                                    elif "Dockerfile" in path:
+                                        for line in content.splitlines():
+                                            if line.strip().upper().startswith("FROM "):
+                                                common_deps.append(f"# Found base image in {repo_name}: {line.strip()}")
+                                                break
                                     else:
                                         logic_files.append(f"# From {repo_name}/{path}\n{content[:1000]}")
 
