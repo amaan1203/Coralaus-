@@ -1,2 +1,7 @@
 [server]
 folderWatchBlacklist = ["output"]
+fileWatcherType = "poll"
+
+[logger]
+level = "error"
+messageFormat = "%(asctime)s %(message)s"

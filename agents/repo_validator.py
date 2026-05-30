@@ -1,1607 +1,855 @@
-# -*- coding: utf-8 -*-
 """
-Repo Relevance Validator - Component 2b (v2)
+Component 2.5 — Repository Validator (Component 2.5)
 
-After search_implementation() returns a GitHub repo, this module verifies
-that the repo is actually the implementation of *this specific paper* (not
-just a similar-topic repo).
+Validates discovered repositories against the research paper metadata to verify
+whether the repository actually implements the paper it claims to represent.
 
-Multi-signal scoring approach (v2):
-    Phase 0: Fetch all repo data upfront (Coral SQL / GitHub API)
-    Check 1: Repository existence check                      (gate / penalty)
-    Check 2: Paper-title / repo-title similarity             (max 30 pts)
-    Check 3: README semantic validation                      (max 15 pts)
-    Check 4: Code-content validation                         (max 40 pts)
-    Check 5: Paper-to-code concept alignment                 (max 20 pts)
-    Check 6: Completeness check                              (max 20 pts)
-    Check 7: Relevance ratio by file inspection              (max 10 pts)
-    Check 8: Execution sanity (static always; dynamic opt-in)(max 10 pts)
-    Check 9: Official vs unofficial classifier               (max 10 pts)
-    Phase F: Normalize raw score (0–155) → 0–100, apply rubric
-
-    Score bands:
-        81–100 → "highly_confident"   (official or near-complete)
-        61–80  → "strong_match"       (strong match, likely useful)
-        41–60  → "plausible"          (plausible, possibly incomplete)
-        21–40  → "weak_match"         (has code, weak paper connection)
-         0–20  → "unrelated"          (empty or unrelated)
-
-Public API
-----------
-    validate_repo_relevance(repo_url, paper_json, *, execution_check=False) -> dict
-    format_relevance_badge(result) -> str
+Heuristics:
+1. Semantic Similarity (Weight: 0.35): Cosine similarity between abstract and README.
+2. Concept Matching (Weight: 0.40): Fuzzy matching of paper keywords against README.
+3. Dependency Matching (Weight: 0.25): Required frameworks checked against requirements text.
 """
 
-import ast
-import logging
 import os
 import re
-import subprocess
-import tempfile
-from dataclasses import dataclass, field
-from typing import Optional
+import json
+import logging
+from typing import Optional, List, Tuple, Dict
+from agents.coral_utils import get_coral_client
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Score constants
+# Hugging Face Authentication & Log Silencing Setup
+# Resolves rate-limit warnings and hides noisy 404 HEAD checks
 # ---------------------------------------------------------------------------
+hf_token = os.environ.get("HUGGING_FACE_ACCESS_TOKEN", "")
+if hf_token:
+    os.environ["HF_TOKEN"] = hf_token
 
-MAX_TITLE_SIMILARITY  = 30
-MAX_README_SEMANTICS  = 15
-MAX_CODE_CONTENT      = 40
-MAX_CONCEPT_ALIGNMENT = 20
-MAX_COMPLETENESS      = 20
-MAX_RELEVANCE_RATIO   = 10
-MAX_EXECUTION_SANITY  = 10
-MAX_OFFICIAL          = 10
-RAW_TOTAL             = 155   # sum of all maximums (normalised to 100)
+# Silence noisy optional dependency 404 loggers
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+logging.getLogger("transformers").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
 
-BAND_HIGHLY_CONFIDENT = 81
-BAND_STRONG_MATCH     = 61
-BAND_PLAUSIBLE        = 41
-BAND_WEAK_MATCH       = 21
+# Try to import rapidfuzz for fuzzy matching
+try:
+    from rapidfuzz import fuzz
+except ImportError:
+    logger.warning("rapidfuzz not installed. Falling back to simple substring matching for keywords.")
+    fuzz = None
 
-# ---------------------------------------------------------------------------
-# File classification constants
-# ---------------------------------------------------------------------------
-
-CODE_EXTENSIONS = {
-    ".py", ".ipynb", ".cpp", ".c", ".h", ".hpp", ".cu", ".cuh",
-    ".js", ".ts", ".java", ".go", ".rs", ".sh", ".r", ".m", ".jl",
-    ".lua", ".scala", ".kt", ".swift", ".rb", ".cs", ".f90",
-}
-
-ENTRYPOINT_NAMES = {
-    "train.py", "train.sh", "training.py", "run.py", "run_training.py",
-    "main.py", "run_experiment.py", "fit.py", "pretrain.py", "finetune.py",
-}
-INFERENCE_NAMES = {
-    "infer.py", "inference.py", "predict.py", "demo.py", "evaluate.py",
-    "eval.py", "test.py", "generate.py", "sample.py", "run_eval.py",
-}
-MODEL_NAMES = {
-    "model.py", "models.py", "network.py", "net.py", "arch.py",
-    "architecture.py", "module.py",
-}
-CONFIG_NAMES = {
-    "config.yaml", "config.yml", "config.json", "hparams.yaml",
-    "hparams.json", "args.py", "config.py", "params.py", "cfg.py",
-    "default.yaml", "conf.yaml",
-}
-DEPENDENCY_FILES = {
-    "requirements.txt", "setup.py", "setup.cfg", "pyproject.toml",
-    "environment.yml", "conda.yaml", "pipfile", "pipfile.lock",
-}
-
-# Repos containing ONLY these files are considered trivially empty
-TRIVIAL_FILES = {
-    "readme.md", "readme.rst", "readme", "license", "license.md",
-    "license.txt", "licence", "citation.cff", ".gitignore", ".gitattributes",
-    "contributing.md", "code_of_conduct.md", "changelog.md",
-}
-
-STUB_PATTERNS = [
-    r"\bTODO\b", r"\bFIXME\b", r"coming soon", r"to be released",
-    r"\bpass\s*$", r"\braise NotImplementedError\b",
-    r"#\s*placeholder", r"#\s*TODO", r"will be added", r"work in progress",
-]
-
-OFFICIAL_PHRASES = [
-    "official implementation", "official code", "official repository",
-    "code for our paper", "code for the paper", "as described in our paper",
-    "this repository contains the code", "this repo contains the code",
-    "code accompanying", "code associated with",
-]
-UNOFFICIAL_PHRASES = [
-    "reimplementation", "re-implementation", "my implementation",
-    "unofficial", "reproduc", "third.party", "not official",
-    "community implementation",
-]
-
-# Frequently-cited ML datasets for concept extraction
-KNOWN_DATASETS = {
-    "imagenet", "coco", "cifar", "mnist", "squad", "glue", "superglue",
-    "wikitext", "openwebtext", "laion", "cc3m", "cc12m", "voc", "ade20k",
-    "kinetics", "ucf101", "hmdb51", "librispeech", "voxceleb", "commonvoice",
-    "ms coco", "lfw", "celeba", "ffhq", "shapenet", "modelnet", "scannet",
-    "nyu depth", "kitti", "waymo", "nuscenes", "bdd100k",
-}
-
-# ---------------------------------------------------------------------------
-# Data container (populated once in Phase 0, shared by all checks)
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class RepoData:
-    """All repository data fetched in Phase 0."""
-    owner: str
-    repo: str
-    readme: str = ""
-    description: str = ""
-    topics: list = field(default_factory=list)
-    file_tree: list = field(default_factory=list)   # [{path, type, size}, ...]
-    contributors: list = field(default_factory=list)  # [str login, ...]
-    default_branch: str = "main"
-    coral_queries_used: int = 0
-    fetch_errors: list = field(default_factory=list)
+# Try to import sentence-transformers for semantic similarity
+try:
+    from sentence_transformers import SentenceTransformer, util
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    logger.warning("sentence-transformers not installed. Semantic Similarity will use Jaccard fallback.")
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Global Session Caches & Singletons
+# Prevents duplicate requests, blind 404s, and duplicate model reloads
 # ---------------------------------------------------------------------------
+# Map: (owner, repo, path) -> file_content (README/requirements/setup.py)
+_fetched_content_cache: Dict[Tuple[str, str, str], str] = {}
+
+# Map: (owner, repo, subdir) -> set of lowercase filenames present in the directory
+_directory_contents_cache: Dict[Tuple[str, str, Optional[str]], set] = {}
+
+# Map: (owner, repo) -> list of all file paths in the repo tree
+_tree_contents_cache: Dict[Tuple[str, str], list] = {}
+
+# Reusable SentenceTransformer singleton
+_embedding_model = None
 
 
-def validate_repo_relevance(
-    repo_url: str,
-    paper_json: dict,
-    *,
-    execution_check: bool = False,
-) -> dict:
+def _get_embedding_model() -> Optional['SentenceTransformer']:
+    """Load and return the reusable SentenceTransformer model singleton."""
+    global _embedding_model
+    if _embedding_model is None and SENTENCE_TRANSFORMERS_AVAILABLE:
+        try:
+            logger.info("Loading SentenceTransformer model 'all-MiniLM-L6-v2' (reusable singleton)...")
+            _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        except Exception as e:
+            logger.debug(f"Failed to load SentenceTransformer model singleton: {e}")
+    return _embedding_model
+
+
+def _get_recursive_files(owner: str, repo: str) -> list:
     """
-    Validate that a GitHub repo is actually the implementation of the given paper.
+    List all file paths recursively under a repository.
+    Cached globally to prevent redundant tree network requests.
+    """
+    key = (owner.lower(), repo.lower())
+    if key in _tree_contents_cache:
+        return _tree_contents_cache[key]
+    
+    paths = []
+    coral = get_coral_client()
+    if coral.available:
+        try:
+            res = coral.sql(f"""
+                SELECT path
+                FROM github.trees
+                WHERE owner = '{owner}' AND repo = '{repo}' AND tree_sha = 'HEAD' AND recursive = 'true' AND type = 'blob'
+            """)
+            if res and "results" in res:
+                paths = [row.get("path", "") for row in res["results"] if row.get("path")]
+        except Exception as e:
+            logger.debug(f"Coral tree search failed for {owner}/{repo}: {e}")
+            
+    if not paths:
+        import requests
+        headers = {}
+        token = os.environ.get("GITHUB_TOKEN")
+        if token and "dummy" not in token.lower() and "your_" not in token.lower():
+            headers["Authorization"] = f"token {token}"
+        try:
+            resp = requests.get(
+                f"https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1",
+                headers=headers, timeout=10
+            )
+            if resp.status_code == 200:
+                tree = resp.json().get("tree", [])
+                paths = [item.get("path", "") for item in tree if item.get("type") == "blob"]
+        except Exception as e:
+            logger.debug(f"GitHub REST tree query failed for {owner}/{repo}: {e}")
+            
+    _tree_contents_cache[key] = paths
+    return paths
+
+
+def _pre_filter_candidates(candidates: list) -> list:
+    """
+    Skeptically prune obvious non-implementations based strictly on local metadata
+    (URL owner, URL name, description) before any network fetches are run.
+    Prunes curated awesome lists and obvious university homework/lab coursework assignments.
+    Does NOT prune based on stars or official/unofficial status.
+    """
+    if not candidates:
+        return []
+
+    pruned = []
+    for c in candidates:
+        url = c.get("repo_url", "").lower()
+        desc = c.get("description", "") or ""
+        desc_lower = desc.lower()
+
+        # 1. Prune awesome lists and curated collections
+        if "awesome-" in url or "awesome list" in desc_lower or "curated list" in desc_lower:
+            logger.info(f"Pre-filtering: Skeptically pruned awesome list repository: {c.get('repo_url')}")
+            continue
+
+        # 2. Prune obvious university homework/coursework assignments
+        course_patterns = [
+            r"cs\d{3}.*assignment", r"assignment.*cs\d{3}",
+            r"homework.*cs\d{3}", r"coursework", r"university assignment",
+            r"homework assignment", r"lab assignment", r"class assignment",
+            r"cs-\d{3}", r"cs\d{3}-"
+        ]
+        is_course = False
+        for pat in course_patterns:
+            if re.search(pat, url) or re.search(pat, desc_lower):
+                is_course = True
+                break
+
+        if is_course:
+            logger.info(f"Pre-filtering: Skeptically pruned obvious coursework/homework assignment: {c.get('repo_url')}")
+            continue
+
+        pruned.append(c)
+
+    return pruned
+
+
+def validate_repo(paper_json: dict, repo_url: str) -> dict:
+    """
+    Validate a single GitHub repository against parsed paper metadata.
+    Supports both main repositories and specific repository subdirectories.
 
     Args:
-        repo_url:        GitHub repo URL (e.g. "https://github.com/user/repo")
-        paper_json:      Parsed paper dict from Component 1. Expected fields:
-                         'title', 'arxiv_id', 'authors', 'keywords', 'abstract'.
-        execution_check: If True, run a lightweight dynamic sandbox check
-                         (clones repo, attempts dry-run parse). Default: False.
+        paper_json: Parsed paper JSON from Component 1
+        repo_url: GitHub repository or subdirectory URL
 
     Returns:
-        {
-            # Core fields (backward-compatible)
-            "relevance_score":             int   (0–100),
-            "verdict":                     str   ("highly_confident" | "strong_match"
-                                                   | "plausible" | "weak_match"
-                                                   | "unrelated"),
-            "evidence":                    list[str],
-            "warnings":                    list[str],
-            "checks_run":                  list[str],
-
-            # Structured summary fields (new)
-            "contains_code":               bool,
-            "paper_match":                 str   ("weak" | "moderate" | "strong"),
-            "implementation_completeness": str   ("low" | "medium" | "high"),
-            "official_likelihood":         str   ("low" | "medium" | "high"),
-            "overall_confidence_score":    int   (0–100),
-
-            # Per-check score breakdown (new)
-            "score_breakdown": {
-                "title_similarity":    int,
-                "readme_semantics":    int,
-                "code_content":        int,
-                "concept_alignment":   int,
-                "completeness":        int,
-                "relevance_ratio":     int,
-                "execution_sanity":    int,
-                "official_classifier": int,
-            },
-
-            # Detail objects (new)
-            "file_stats":              dict,
-            "official_classification": dict,
-            "completeness_signals":    dict,
-            "coral_queries_used":      int,
-        }
+        Dict containing validation scores, confidence_score, and classification.
     """
-    result = _empty_result()
-
-    if not repo_url:
-        result["warnings"].append("No repo URL provided")
-        return result
-
-    owner, repo = _parse_github_url(repo_url)
+    owner, repo, subdir = _parse_github_url(repo_url)
     if not owner or not repo:
-        result["warnings"].append(f"Could not parse GitHub URL: {repo_url}")
-        return result
+        logger.error(f"Could not parse GitHub URL: {repo_url}")
+        return _error_result(repo_url, "Invalid GitHub URL")
 
-    # -----------------------------------------------------------------------
-    # Phase 0: Fetch all repo data upfront (one pass, shared by all checks)
-    # -----------------------------------------------------------------------
-    repo_data = _fetch_repo_data(owner, repo)
-    result["coral_queries_used"] = repo_data.coral_queries_used
-    result["checks_run"].append("data_fetch")
-    if repo_data.fetch_errors:
-        result["warnings"].extend(repo_data.fetch_errors)
+    # Fetch recursive tree directory list
+    paths = _get_recursive_files(owner, repo)
 
-    # Extract paper concepts once — reused by Checks 5, 6, 7
-    paper_concepts = _extract_paper_concepts(paper_json)
+    # 1. Verify code files presence
+    has_code = False
+    code_exts = {".py", ".ipynb", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs", ".sh", ".scala", ".cs", ".rb", ".php", ".lua", ".pl", ".m", ".kt"}
+    for p in paths:
+        if any(p.endswith(ext) for ext in code_exts):
+            has_code = True
+            break
 
-    breakdown = result["score_breakdown"]
+    # If no code files found at all, apply immediate zero score and classify as mismatch
+    if not has_code:
+        logger.warning(f"Validation: {owner}/{repo} contains zero code files in its entire repository tree. Classifying as MISMATCH.")
+        return {
+            "repo_url": repo_url,
+            "confidence_score": 0.0,
+            "classification": "MISMATCH",
+            "validator_scores": {
+                "semantic": 0.0,
+                "concept": 0.0,
+                "dependency": 0.0,
+                "codebase": 0.0
+            },
+            "error": "No code files found in repository tree"
+        }
 
-    # -----------------------------------------------------------------------
-    # Check 1: Repository Existence (gate — can trigger early exit)
-    # -----------------------------------------------------------------------
-    result["checks_run"].append("repo_existence")
-    existence = _check_repo_existence(repo_data.file_tree)
-    result["file_stats"] = existence["file_stats"]
-    result["contains_code"] = existence["has_code"]
-    result["evidence"].extend(existence["evidence"])
+    # Fetch README and requirements, taking subdirectory into account
+    readme = _fetch_readme(owner, repo, subdir)
+    reqs_text = _fetch_requirements(owner, repo, subdir)
 
-    if existence["is_trivially_empty"]:
-        result["warnings"].append(
-            "Repository appears empty or trivially small — no real code files found"
-        )
-        result["relevance_score"] = 5
-        result["overall_confidence_score"] = 5
-        result["verdict"] = "unrelated"
-        return result
+    if not readme:
+        logger.warning(f"No README found for {owner}/{repo} (Subdir: {subdir}). Giving low validation score.")
 
-    if not existence["has_code"]:
-        result["warnings"].append(
-            "Repository has no recognised code files — likely documentation-only"
-        )
+    # Select up to 3 representative code files for codebase alignment scans
+    code_paths = [p for p in paths if p.endswith(".py") or p.endswith(".ipynb")]
+    
+    def _file_priority(path: str) -> int:
+        p_lower = path.lower()
+        if "model" in p_lower or "net" in p_lower:
+            return 1
+        if "train" in p_lower or "algo" in p_lower or "dapo" in p_lower:
+            return 2
+        if "main" in p_lower or "run" in p_lower or "backtest" in p_lower:
+            return 3
+        if "loss" in p_lower or "metric" in p_lower or "eval" in p_lower:
+            return 4
+        return 5
+        
+    code_paths.sort(key=_file_priority)
+    code_contents = []
+    for cp in code_paths[:3]:
+        content = _fetch_cached_file(owner, repo, cp)
+        if content:
+            code_contents.append(content)
 
-    # -----------------------------------------------------------------------
-    # Check 2: Paper-title / repo-title similarity
-    # -----------------------------------------------------------------------
-    result["checks_run"].append("title_similarity")
-    title_res = _check_title_similarity(
-        paper_json.get("title", ""),
-        repo,
-        repo_data.readme,
-        repo_data.topics,
-        repo_data.description,
-    )
-    breakdown["title_similarity"] = title_res["score"]
-    result["evidence"].extend(title_res["evidence"])
-    result["warnings"].extend(title_res["warnings"])
+    # 2. Parse/detect frameworks and keywords from paper
+    paper_spec = {
+        "abstract": paper_json.get("abstract", "") or paper_json.get("title", ""),
+        "title": paper_json.get("title", ""),
+        "keywords": _extract_paper_keywords(paper_json),
+        "frameworks": _detect_paper_frameworks(paper_json),
+        "codebase_terms": _extract_codebase_terms(paper_json)
+    }
 
-    # -----------------------------------------------------------------------
-    # Check 3: README semantic validation
-    # -----------------------------------------------------------------------
-    result["checks_run"].append("readme_semantics")
-    readme_res = _check_readme_semantics(repo_data.readme, paper_json, paper_concepts)
-    breakdown["readme_semantics"] = readme_res["score"]
-    result["evidence"].extend(readme_res["evidence"])
-    result["warnings"].extend(readme_res["warnings"])
+    # 3. Direct Code Import Dependency Matching Fallback
+    # If requirements text is absent, scan python code files for framework imports
+    if not reqs_text and code_contents:
+        combined_code = "\n".join(code_contents)
+        detected_fws = []
+        if "import torch" in combined_code or "from torch" in combined_code:
+            detected_fws.append("PyTorch")
+        if "import tensorflow" in combined_code or "from tensorflow" in combined_code or "import keras" in combined_code:
+            detected_fws.append("TensorFlow")
+        if "import jax" in combined_code or "from jax" in combined_code:
+            detected_fws.append("JAX")
+        
+        if detected_fws:
+            reqs_text = "\n".join(detected_fws)
+            logger.info(f"Dependency matching: Detected framework imports directly in code for {owner}/{repo}: {detected_fws}")
 
-    # -----------------------------------------------------------------------
-    # Check 4: Code-content validation
-    # -----------------------------------------------------------------------
-    result["checks_run"].append("code_content")
-    code_res = _check_code_content(repo_data.file_tree, owner, repo)
-    breakdown["code_content"] = code_res["score"]
-    result["evidence"].extend(code_res["evidence"])
-    result["warnings"].extend(code_res["warnings"])
-    code_samples = code_res.get("code_samples", {})
+    # 4. Run Individual Heuristic Validators
+    concept_score = ConceptValidator().validate(paper_spec, readme)
+    dependency_score = DependencyValidator().validate(paper_spec, reqs_text)
+    codebase_score = CodebaseAlignmentValidator().validate(paper_spec, code_contents)
 
-    # -----------------------------------------------------------------------
-    # Check 5: Paper-to-code concept alignment
-    # -----------------------------------------------------------------------
-    result["checks_run"].append("concept_alignment")
-    align_res = _check_concept_alignment(paper_concepts, repo_data.file_tree, code_samples)
-    breakdown["concept_alignment"] = align_res["score"]
-    result["evidence"].extend(align_res["evidence"])
-    result["warnings"].extend(align_res["warnings"])
+    # Fast-Check Early Exit for SentenceTransformer
+    if concept_score == 0.0 and readme:
+        logger.info(f"Fast check: Skeptically skipped SentenceTransformer embedding check for {owner}/{repo} (0 keywords matched in README).")
+        semantic_score = 0.0
+    else:
+        semantic_score = SemanticValidator().validate(paper_spec, readme)
 
-    # -----------------------------------------------------------------------
-    # Check 6: Completeness
-    # -----------------------------------------------------------------------
-    result["checks_run"].append("completeness")
-    comp_res = _check_completeness(repo_data.file_tree, code_samples)
-    breakdown["completeness"] = comp_res["score"]
-    result["completeness_signals"] = comp_res["signals"]
-    result["evidence"].extend(comp_res["evidence"])
-    result["warnings"].extend(comp_res["warnings"])
-
-    # -----------------------------------------------------------------------
-    # Check 7: Relevance ratio by file inspection
-    # -----------------------------------------------------------------------
-    result["checks_run"].append("relevance_ratio")
-    ratio_res = _check_relevance_ratio(repo_data.file_tree, paper_concepts)
-    breakdown["relevance_ratio"] = ratio_res["score"]
-    result["file_stats"].update(ratio_res["file_stats"])
-    result["evidence"].extend(ratio_res["evidence"])
-
-    # -----------------------------------------------------------------------
-    # Check 8: Execution sanity (static always; dynamic opt-in)
-    # -----------------------------------------------------------------------
-    result["checks_run"].append("execution_sanity")
-    exec_res = _check_execution_static(repo_data.file_tree, code_samples)
-    if execution_check:
-        dyn = _check_execution_dynamic(owner, repo)
-        exec_res["score"] = min(
-            exec_res["score"] + dyn["score_delta"], MAX_EXECUTION_SANITY
-        )
-        exec_res["evidence"].extend(dyn["evidence"])
-        exec_res["warnings"].extend(dyn["warnings"])
-    breakdown["execution_sanity"] = exec_res["score"]
-    result["evidence"].extend(exec_res["evidence"])
-    result["warnings"].extend(exec_res["warnings"])
-
-    # -----------------------------------------------------------------------
-    # Check 9: Official vs unofficial classifier
-    # -----------------------------------------------------------------------
-    result["checks_run"].append("official_classifier")
-    official_res = _classify_official(
-        owner, repo,
-        repo_data.readme, repo_data.description,
-        paper_json, repo_data.contributors,
-    )
-    breakdown["official_classifier"] = official_res["score"]
-    result["official_classification"] = official_res["classification"]
-    result["evidence"].extend(official_res["evidence"])
-    result["warnings"].extend(official_res["warnings"])
-
-    # -----------------------------------------------------------------------
-    # Phase F: Compute final normalised score + derived labels
-    # -----------------------------------------------------------------------
-    raw_score = sum(breakdown.values())
-    if not existence["has_code"]:
-        raw_score = max(0, raw_score - 20)   # Penalty: no real code
-
-    normalised = min(100, int(round(raw_score * 100 / RAW_TOTAL)))
-    result["relevance_score"] = normalised
-    result["overall_confidence_score"] = normalised
-    result["verdict"] = _score_to_verdict(normalised)
-
-    # Summary labels derived from sub-scores
-    paper_match_raw = (
-        breakdown["title_similarity"]
-        + breakdown["readme_semantics"]
-        + breakdown["concept_alignment"]
-    )
-    paper_match_max = MAX_TITLE_SIMILARITY + MAX_README_SEMANTICS + MAX_CONCEPT_ALIGNMENT
-    result["paper_match"] = _score_to_label(paper_match_raw, paper_match_max)
-    result["implementation_completeness"] = _score_to_label(
-        breakdown["completeness"], MAX_COMPLETENESS
-    )
-    result["official_likelihood"] = official_res["classification"].get(
-        "label_confidence", "low"
+    # 5. Calculate weighted confidence score
+    confidence_score = (
+        (semantic_score * 0.25) +
+        (concept_score * 0.30) +
+        (dependency_score * 0.20) +
+        (codebase_score * 0.25)
     )
 
-    logger.info(
-        "Repo relevance for %s/%s: %d/100 → %s",
-        owner, repo, normalised, result["verdict"],
-    )
+    # 6. Classify based on score using adjusted thresholds:
+    # Mismatch < 0.60, Partial Match >= 0.60 and < 0.80, Match >= 0.80
+    classification = "UNKNOWN"
+    if not readme and not reqs_text and not code_contents:
+        classification = "UNKNOWN"
+        confidence_score = 0.0
+    elif confidence_score >= 0.80:
+        classification = "MATCH"
+    elif confidence_score >= 0.60:
+        classification = "PARTIAL_MATCH"
+    else:
+        classification = "MISMATCH"
+
+    result = {
+        "repo_url": repo_url,
+        "confidence_score": round(confidence_score, 4),
+        "classification": classification,
+        "validator_scores": {
+            "semantic": round(semantic_score, 4),
+            "concept": round(concept_score, 4),
+            "dependency": round(dependency_score, 4),
+            "codebase": round(codebase_score, 4)
+        }
+    }
+
+    logger.info(f"Validated {owner}/{repo} (Subdir: {subdir}) -> Score: {confidence_score:.2%} ({classification}) [Sem: {semantic_score:.2f}, Con: {concept_score:.2f}, Dep: {dependency_score:.2f}, Code: {codebase_score:.2f}]")
     return result
 
 
-# ---------------------------------------------------------------------------
-# Phase 0: Data fetch (Coral SQL → GitHub API fallback)
-# ---------------------------------------------------------------------------
+def validate_and_rank_candidates(paper_json: dict, candidates: list) -> tuple:
+    """
+    Validate multiple candidate repositories and rank them by confidence score.
+    Applies skeptical pre-filtering and metadata boosts (is_official, acronym alignment).
+
+    Args:
+        paper_json: Parsed paper JSON
+        candidates: List of repository dicts (e.g. from search_implementation)
+
+    Returns:
+        Tuple: (best_candidate_validation_result, list_of_all_validation_results)
+    """
+    if not candidates:
+        return _error_result(None, "No candidates to validate"), []
+
+    # Skeptically prune candidates list first
+    filtered_candidates = _pre_filter_candidates(candidates)
+    if not filtered_candidates:
+        filtered_candidates = candidates
+
+    ranked_results = []
+    for c in filtered_candidates:
+        url = c.get("repo_url")
+        if not url:
+            continue
+        try:
+            val_res = validate_repo(paper_json, url)
+            # Carry over search metadata
+            val_res["search_method"] = c.get("search_method")
+            val_res["stars"] = c.get("stars", 0)
+            val_res["is_official"] = c.get("is_official", False)
+            
+            # --- Apply Meta-Boosts to confidence score ---
+            boost = 0.0
+            if val_res.get("is_official"):
+                logger.info(f"Officiality boost: +0.15 boost applied to official repo: {url}")
+                boost += 0.15
+                
+            # Check Acronym alignment between repo name and paper title
+            title = paper_json.get("title", "")
+            title_words = re.findall(r"\b[a-zA-Z0-9]{3,8}\b", title)
+            repo_name_lower = url.split("/")[-1].lower()
+            acronym_match = False
+            for word in title_words:
+                if len(word) >= 3 and word.lower() in repo_name_lower:
+                    acronym_match = True
+                    break
+            if acronym_match:
+                logger.info(f"Acronym boost: +0.05 boost applied to aligned repo: {url}")
+                boost += 0.05
+                
+            if boost > 0.0:
+                val_res["confidence_score"] = min(1.0, val_res["confidence_score"] + boost)
+                
+                # Re-classify based on boosted score
+                if val_res["confidence_score"] >= 0.80:
+                    val_res["classification"] = "MATCH"
+                elif val_res["confidence_score"] >= 0.60:
+                    val_res["classification"] = "PARTIAL_MATCH"
+                else:
+                    val_res["classification"] = "MISMATCH"
+                    
+            ranked_results.append(val_res)
+        except Exception as e:
+            logger.error(f"Failed to validate candidate {url}: {e}")
+            ranked_results.append({
+                "repo_url": url,
+                "confidence_score": 0.0,
+                "classification": "UNKNOWN",
+                "validator_scores": {"semantic": 0.0, "concept": 0.0, "dependency": 0.0, "codebase": 0.0},
+                "search_method": c.get("search_method"),
+                "stars": c.get("stars", 0),
+                "is_official": c.get("is_official", False),
+                "error": str(e)
+            })
+
+    # Sort candidates by confidence score in descending order
+    ranked_results.sort(key=lambda x: x["confidence_score"], reverse=True)
+
+    best = ranked_results[0] if ranked_results else _error_result(None, "No candidates validated")
+    return best, ranked_results
 
 
-def _fetch_repo_data(owner: str, repo: str) -> RepoData:
-    """Fetch all repository data in one pass."""
-    data = RepoData(owner=owner, repo=repo)
-    try:
-        from agents.coral_utils import get_coral_client
-        coral = get_coral_client()
-        if coral.available:
-            _coral_fetch(coral, data)
-            if data.readme or data.file_tree:
-                return data
-    except Exception as exc:
-        logger.debug("Coral fetch failed: %s", exc)
-        data.fetch_errors.append(f"Coral unavailable: {exc}")
+# ===========================================================================
+# Individual Validator Classes
+# ===========================================================================
 
-    _github_api_fetch(data)
-    return data
+class SemanticValidator:
+    """Validator 1: Semantic similarity of abstract ↔ README."""
 
+    def validate(self, paper_spec: dict, readme_content: str) -> float:
+        abstract = paper_spec.get("abstract", "")
+        if not abstract or not readme_content:
+            return 0.5
 
-def _coral_fetch(coral, data: RepoData) -> None:
-    """Populate RepoData using Coral SQL queries."""
-    # Query 1: Repo metadata
-    res = coral.sql(f"""
-        SELECT description, default_branch, topics
-        FROM github.repos_get
-        WHERE owner = '{data.owner}' AND repo = '{data.repo}'
-    """)
-    data.coral_queries_used += 1
-    if res and "results" in res and res["results"]:
-        row = res["results"][0]
-        data.description = row.get("description", "") or ""
-        data.default_branch = row.get("default_branch", "main") or "main"
-        topics = row.get("topics", [])
-        if isinstance(topics, list):
-            data.topics = topics
-        elif isinstance(topics, str):
-            data.topics = [t.strip() for t in topics.split(",") if t.strip()]
+        # Clean README slightly for better comparison (cap it to avoid heavy encoding costs)
+        readme_trimmed = readme_content[:2500].strip()
 
-    # Query 2: README (try common names)
-    for readme_name in ["README.md", "readme.md", "README.rst", "README"]:
-        res = coral.sql(f"""
-            SELECT content_text AS content
-            FROM github.contents
-            WHERE owner = '{data.owner}'
-              AND repo  = '{data.repo}'
-              AND path  = '{readme_name}'
-        """)
-        data.coral_queries_used += 1
-        if res and "results" in res and res["results"]:
-            content = res["results"][0].get("content", "")
-            if content:
-                data.readme = content
-                break
+        # If sentence-transformers is available, calculate exact cosine similarity
+        if SENTENCE_TRANSFORMERS_AVAILABLE:
+            try:
+                # Load the reusable model singleton
+                model = _get_embedding_model()
+                if model:
+                    emb_abstract = model.encode(abstract, convert_to_tensor=True)
+                    emb_readme = model.encode(readme_trimmed, convert_to_tensor=True)
+                    score = util.pytorch_cos_sim(emb_abstract, emb_readme).item()
+                    # Normalize cosine sim from [-1, 1] to [0, 1]
+                    normalized_score = max(0.0, min(1.0, (score + 1) / 2))
+                    return normalized_score
+            except Exception as e:
+                logger.debug(f"SentenceTransformer encoding failed: {e}. Falling back to Jaccard bigram similarity.")
 
-    # Query 3: Recursive file tree
-    res = coral.sql(f"""
-        SELECT path, type, size
-        FROM github.contents
-        WHERE owner     = '{data.owner}'
-          AND repo      = '{data.repo}'
-          AND recursive = true
-    """)
-    data.coral_queries_used += 1
-    if res and "results" in res:
-        data.file_tree = res["results"]
+        # Jaccard Bigram Fallback
+        return self._jaccard_bigram_similarity(abstract, readme_trimmed)
 
-    # Query 4: Contributors
-    res = coral.sql(f"""
-        SELECT login
-        FROM github.contributors
-        WHERE owner = '{data.owner}' AND repo = '{data.repo}'
-        LIMIT 20
-    """)
-    data.coral_queries_used += 1
-    if res and "results" in res:
-        data.contributors = [
-            r.get("login", "") for r in res["results"] if r.get("login")
-        ]
+    def _jaccard_bigram_similarity(self, text1: str, text2: str) -> float:
+        """Fallback: Computes Jaccard bigram similarity between two text blocks."""
+        def get_bigrams(text):
+            words = re.findall(r'[a-zA-Z0-9]+', text.lower())
+            stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'of'}
+            words = [w for w in words if w not in stop_words and len(w) > 1]
+            return set(zip(words[:-1], words[1:])) if len(words) > 1 else set(words)
+
+        bigrams1 = get_bigrams(text1)
+        bigrams2 = get_bigrams(text2)
+
+        if not bigrams1 or not bigrams2:
+            return 0.0
+
+        intersection = bigrams1.intersection(bigrams2)
+        union = bigrams1.union(bigrams2)
+        return len(intersection) / len(union)
 
 
-def _github_api_fetch(data: RepoData) -> None:
-    """Fallback: populate RepoData using the GitHub REST API."""
-    try:
-        import base64
+class ConceptValidator:
+    """Validator 2: Paper technical keywords fuzzy matched in README."""
+
+    def validate(self, paper_spec: dict, readme_content: str) -> float:
+        keywords = paper_spec.get("keywords", [])
+        if not keywords or not readme_content:
+            return 0.5
+
+        readme_lower = readme_content.lower()
+        matched = 0
+
+        for keyword in keywords:
+            keyword_lower = keyword.lower()
+            if fuzz:
+                if fuzz.partial_ratio(keyword_lower, readme_lower) >= 65:
+                    matched += 1
+            else:
+                if keyword_lower in readme_lower:
+                    matched += 1
+
+        score = matched / len(keywords) if keywords else 0.5
+        return score
+
+
+class DependencyValidator:
+    """Validator 3: framework requirements compared with repository requirements."""
+
+    def validate(self, paper_spec: dict, requirements_text: str) -> float:
+        frameworks = paper_spec.get("frameworks", [])
+        if not frameworks:
+            return 1.0
+
+        if not requirements_text:
+            return 0.5
+
+        reqs_clean = requirements_text.lower()
+        matched = 0
+
+        for fw in frameworks:
+            fw_lower = fw.lower()
+            search_terms = [fw_lower]
+            if fw_lower == "pytorch":
+                search_terms.append("torch")
+            elif fw_lower == "tensorflow":
+                search_terms.extend(["tf-", "tf_"])
+
+            if any(term in reqs_clean for term in search_terms):
+                matched += 1
+
+        score = matched / len(frameworks) if frameworks else 1.0
+        return score
+
+
+class CodebaseAlignmentValidator:
+    """Validator 4: Architectural names, losses, datasets, benchmarks, and algorithms matched in codebase files."""
+
+    def validate(self, paper_spec: dict, code_files_content: List[str]) -> float:
+        terms = paper_spec.get("codebase_terms", [])
+        if not terms or not code_files_content:
+            return 0.5
+
+        combined_code = "\n".join(code_files_content).lower()
+        matched = 0
+        for term in terms:
+            term_lower = term.lower()
+            if fuzz:
+                if fuzz.partial_ratio(term_lower, combined_code) >= 75:
+                    matched += 1
+            else:
+                if term_lower in combined_code:
+                    matched += 1
+
+        score = matched / len(terms) if terms else 0.5
+        return score
+
+
+# ===========================================================================
+# Internal Utility Helpers & Caching File Fetchers
+# ===========================================================================
+
+def _parse_github_url(url: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Extract owner, repo name, and optional subdirectory path from GitHub URL."""
+    if not url:
+        return None, None, None
+
+    # Match owner/repo/tree/branch/path or blob/branch/path
+    match = re.search(r"github\.com/([^/]+)/([^/]+)/(?:tree|blob)/[^/]+/(.+)$", url)
+    if match:
+        owner = match.group(1)
+        repo = match.group(2)
+        subdir = match.group(3).rstrip("/")
+        return owner, repo, subdir
+
+    # Standard formats
+    match = re.search(r"github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    if match:
+        return match.group(1), match.group(2), None
+
+    match = re.search(r"github\.com/([^/]+)/([^/]+?)(?:/.*)?$", url)
+    if match:
+        return match.group(1), match.group(2), None
+
+    return None, None, None
+
+
+def _get_directory_contents(owner: str, repo: str, subdir: Optional[str] = None) -> set:
+    """
+    List all filenames at the root or specific subdirectory of a repository.
+    Cached globally to prevent blind HTTP 404s for missing files.
+    """
+    key = (owner.lower(), repo.lower(), subdir.lower() if subdir else None)
+    if key in _directory_contents_cache:
+        return _directory_contents_cache[key]
+
+    filenames = set()
+    coral = get_coral_client()
+    path_query = subdir if subdir else ""
+
+    if coral.available:
+        try:
+            res = coral.sql(f"""
+                SELECT path
+                FROM github.contents
+                WHERE owner = '{owner}' AND repo = '{repo}' AND path = '{path_query}'
+            """)
+            if res and "results" in res:
+                for row in res["results"]:
+                    p = row.get("path", "")
+                    name = p.split("/")[-1] if p else ""
+                    if name:
+                        filenames.add(name)
+        except Exception as e:
+            logger.debug(f"Coral directory list failed for {owner}/{repo}: {e}")
+
+    if not filenames:
+        # Fallback to GitHub REST API contents endpoint
         import requests
-
-        headers: dict = {}
-        token = os.environ.get("GITHUB_TOKEN", "")
+        headers = {}
+        token = os.environ.get("GITHUB_TOKEN")
         if token and "dummy" not in token.lower() and "your_" not in token.lower():
             headers["Authorization"] = f"token {token}"
-
-        # Repo metadata
-        resp = requests.get(
-            f"https://api.github.com/repos/{data.owner}/{data.repo}",
-            headers=headers, timeout=10,
-        )
-        if resp.status_code == 200:
-            d = resp.json()
-            data.description = d.get("description", "") or ""
-            data.default_branch = d.get("default_branch", "main")
-            data.topics = d.get("topics", [])
-
-        # README
-        resp = requests.get(
-            f"https://api.github.com/repos/{data.owner}/{data.repo}/readme",
-            headers=headers, timeout=10,
-        )
-        if resp.status_code == 200:
-            d = resp.json()
-            if d.get("encoding") == "base64":
-                data.readme = base64.b64decode(d["content"]).decode("utf-8", errors="replace")
-            elif d.get("download_url"):
-                dl = requests.get(d["download_url"], timeout=10)
-                if dl.status_code == 200:
-                    data.readme = dl.text
-
-        # Full file tree via Git Trees API (recursive=1)
-        resp = requests.get(
-            f"https://api.github.com/repos/{data.owner}/{data.repo}"
-            f"/git/trees/{data.default_branch}?recursive=1",
-            headers=headers, timeout=15,
-        )
-        if resp.status_code == 200:
-            d = resp.json()
-            data.file_tree = [
-                {"path": item["path"], "type": item["type"], "size": item.get("size", 0)}
-                for item in d.get("tree", [])
-            ]
-
-        # Contributors
-        resp = requests.get(
-            f"https://api.github.com/repos/{data.owner}/{data.repo}/contributors",
-            headers=headers, timeout=10, params={"per_page": 20},
-        )
-        if resp.status_code == 200:
-            data.contributors = [c.get("login", "") for c in resp.json() if c.get("login")]
-
-    except Exception as exc:
-        logger.debug("GitHub API fallback failed: %s", exc)
-        data.fetch_errors.append(f"GitHub API failed: {exc}")
-
-
-# ---------------------------------------------------------------------------
-# Check 1: Repository Existence
-# ---------------------------------------------------------------------------
-
-
-def _check_repo_existence(file_tree: list) -> dict:
-    """
-    Confirm the repo is not empty or a trivial placeholder.
-    Returns gate signals — no score value, but can trigger early exit.
-    """
-    all_paths = [
-        item.get("path", "").lower()
-        for item in file_tree
-        if item.get("type") == "blob"
-    ]
-    code_files = [p for p in all_paths if _ext(p) in CODE_EXTENSIONS]
-    substantial = [p for p in code_files if _file_size(p, file_tree) > 1024]
-
-    non_trivial = [p for p in all_paths if os.path.basename(p) not in TRIVIAL_FILES]
-    folders = {p.split("/")[0] for p in all_paths if "/" in p}
-    meaningful_folders = folders & {
-        "src", "source", "models", "model", "train", "training",
-        "inference", "eval", "experiments", "scripts", "lib",
-    }
-
-    has_code = bool(code_files)
-    is_trivially_empty = len(non_trivial) == 0 or (
-        not code_files and len(all_paths) < 5
-    )
-
-    evidence = []
-    if has_code:
-        evidence.append(f"Repository contains {len(code_files)} code file(s)")
-    if meaningful_folders:
-        evidence.append(
-            f"Meaningful folder structure detected: {', '.join(sorted(meaningful_folders))}"
-        )
-
-    return {
-        "has_code": has_code,
-        "is_trivially_empty": is_trivially_empty,
-        "evidence": evidence,
-        "file_stats": {
-            "total_files": len(all_paths),
-            "code_files": len(code_files),
-            "substantial_code_files": len(substantial),
-            "meaningful_folders": sorted(meaningful_folders),
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# Check 2: Paper-title / Repo-title Similarity (enhanced)
-# ---------------------------------------------------------------------------
-
-
-def _check_title_similarity(
-    title: str,
-    repo_name: str,
-    readme: str,
-    topics: list,
-    description: str,
-) -> dict:
-    """
-    Compare paper title against repo name, README H1 heading, and topics/tags.
-    Uses rapidfuzz + optional sentence-transformers embeddings.
-    Returns score (0–30) and evidence.
-    """
-    score = 0
-    evidence: list = []
-    warnings: list = []
-
-    if not title:
-        warnings.append("No paper title provided for title similarity check")
-        return {"score": 0, "evidence": evidence, "warnings": warnings}
-
-    title_clean = _normalize_text(title).lower()
-    abbreviation = _extract_abbreviation(title)
-
-    # Sub-check A: title vs repo name (max 10 pts)
-    repo_clean = repo_name.lower().replace("-", " ").replace("_", " ")
-    ratio_a = _fuzzy_ratio(title_clean, repo_clean)
-    if abbreviation and abbreviation.lower() in repo_clean:
-        score += 10
-        evidence.append(
-            f"Paper abbreviation '{abbreviation}' found in repo name '{repo_name}' (+10)"
-        )
-    elif ratio_a >= 0.7:
-        pts = int(10 * ratio_a)
-        score += pts
-        evidence.append(f"Paper title matches repo name (similarity: {ratio_a:.0%}) (+{pts})")
-    elif ratio_a >= 0.4:
-        score += 4
-        evidence.append(f"Partial title match in repo name (similarity: {ratio_a:.0%}) (+4)")
-
-    # Sub-check B: title vs README H1 headings (max 15 pts)
-    h1_lines = [
-        line.lstrip("#").strip()
-        for line in readme.split("\n")
-        if line.startswith("#") and not line.startswith("##")
-    ]
-    best_h1_ratio = max(
-        (_fuzzy_ratio(title_clean, h1.lower()) for h1 in h1_lines),
-        default=0.0,
-    )
-    # Embedding similarity (graceful fallback if library absent)
-    emb_sim = _embedding_similarity(title, "\n".join(h1_lines)) if h1_lines else 0.0
-    combined_h1 = max(best_h1_ratio, emb_sim)
-
-    if combined_h1 >= 0.75:
-        score += 15
-        evidence.append(
-            f"Paper title strongly matches README heading "
-            f"(similarity: {combined_h1:.0%}) (+15)"
-        )
-    elif combined_h1 >= 0.5:
-        score += 8
-        evidence.append(
-            f"Partial title match in README heading (similarity: {combined_h1:.0%}) (+8)"
-        )
-    elif not h1_lines:
-        warnings.append("README has no H1 heading for title comparison")
-
-    # Sub-check C: title vs topics / tags (max 5 pts)
-    if topics:
-        topic_text = " ".join(topics).lower().replace("-", " ")
-        title_tokens = set(title_clean.split())
-        topic_tokens = set(topic_text.split())
-        overlap = len(title_tokens & topic_tokens) / max(len(title_tokens), 1)
-        if abbreviation and abbreviation.lower() in topic_text:
-            score += 5
-            evidence.append(
-                f"Paper abbreviation '{abbreviation}' found in repo topics (+5)"
+        try:
+            resp = requests.get(
+                f"https://api.github.com/repos/{owner}/{repo}/contents/{path_query}",
+                headers=headers, timeout=10
             )
-        elif overlap >= 0.3:
-            pts = min(5, int(5 * overlap * 2))
-            score += pts
-            evidence.append(
-                f"Paper title tokens overlap with repo topics ({overlap:.0%}) (+{pts})"
-            )
+            if resp.status_code == 200:
+                items = resp.json()
+                if isinstance(items, list):
+                    for item in items:
+                        name = item.get("name", "")
+                        if name:
+                            filenames.add(name)
+            else:
+                logger.debug(f"GitHub API directory list returned status {resp.status_code} for {owner}/{repo}")
+        except Exception as e:
+            logger.debug(f"GitHub API directory list failed for {owner}/{repo}: {e}")
 
-    score = min(score, MAX_TITLE_SIMILARITY)
-    return {"score": score, "evidence": evidence, "warnings": warnings}
-
-
-# ---------------------------------------------------------------------------
-# Check 3: README Semantic Validation (enhanced)
-# ---------------------------------------------------------------------------
-
-
-def _check_readme_semantics(
-    readme: str, paper_json: dict, concepts: list
-) -> dict:
-    """
-    Check whether the README genuinely references the paper.
-    Returns score (0–15) and evidence.
-    """
-    score = 0
-    evidence: list = []
-    warnings: list = []
-
-    if not readme:
-        warnings.append("No README found — cannot perform semantic validation")
-        return {"score": 0, "evidence": evidence, "warnings": warnings}
-
-    readme_lower = readme.lower()
-    title    = paper_json.get("title", "")
-    arxiv_id = paper_json.get("arxiv_id", "")
-    authors  = paper_json.get("authors", [])
-
-    # Signal 1: arXiv ID present (max 5 pts)
-    if arxiv_id:
-        patterns = [
-            re.escape(arxiv_id),
-            rf"arxiv[:\s]*{re.escape(arxiv_id)}",
-            rf"arxiv\.org/abs/{re.escape(arxiv_id)}",
-        ]
-        for pat in patterns:
-            if re.search(pat, readme, re.IGNORECASE):
-                score += 5
-                evidence.append(f"arXiv ID '{arxiv_id}' found in README (+5)")
-                break
-        else:
-            warnings.append(f"arXiv ID '{arxiv_id}' not found in README")
-
-    # Signal 2: Title or abbreviation (max 3 pts)
-    if title:
-        abbrev = _extract_abbreviation(title)
-        if _normalize_text(title).lower() in readme_lower:
-            score += 3
-            evidence.append("Full paper title found in README (+3)")
-        elif abbrev and len(abbrev) >= 3 and abbrev.lower() in readme_lower:
-            score += 2
-            evidence.append(f"Paper abbreviation '{abbrev}' found in README (+2)")
-
-    # Signal 3: Author names (max 3 pts)
-    matched_authors = []
-    for author in authors:
-        if isinstance(author, dict):
-            last = (author.get("last", "") or "").strip()
-        elif isinstance(author, str):
-            parts = author.strip().split()
-            last = parts[-1] if parts else ""
-        else:
-            continue
-        if last and len(last) >= 2 and last.lower() in readme_lower:
-            matched_authors.append(last)
-    if len(matched_authors) >= 2:
-        score += 3
-        evidence.append(
-            f"Author names found in README: {', '.join(matched_authors)} (+3)"
-        )
-    elif len(matched_authors) == 1:
-        score += 1
-        evidence.append(f"Author name found in README: {matched_authors[0]} (+1)")
-
-    # Signal 4: "Official implementation" claim phrases (max 2 pts)
-    for phrase in OFFICIAL_PHRASES:
-        if phrase in readme_lower:
-            score += 2
-            evidence.append(
-                f"Implementation claim phrase detected in README: '{phrase}' (+2)"
-            )
-            break
-
-    # Signal 5: Key paper concepts mentioned in README (max 2 pts)
-    concept_hits = sum(1 for c in concepts if c.lower() in readme_lower)
-    if concept_hits >= 3:
-        score += 2
-        evidence.append(f"README mentions {concept_hits} key paper concepts (+2)")
-    elif concept_hits >= 1:
-        score += 1
-        evidence.append(f"README mentions {concept_hits} key paper concept(s) (+1)")
-
-    score = min(score, MAX_README_SEMANTICS)
-    return {"score": score, "evidence": evidence, "warnings": warnings}
+    _directory_contents_cache[key] = filenames
+    return filenames
 
 
-# ---------------------------------------------------------------------------
-# Check 4: Code-Content Validation
-# ---------------------------------------------------------------------------
+def _fetch_cached_file(owner: str, repo: str, path: str) -> Optional[str]:
+    """Fetch file content from Coral SQL or GitHub REST API, wrapping it in a global session cache."""
+    key = (owner.lower(), repo.lower(), path.lower())
+    if key in _fetched_content_cache:
+        return _fetched_content_cache[key]
 
-
-def _check_code_content(file_tree: list, owner: str, repo: str) -> dict:
-    """
-    Check whether the repo has real, executable source code.
-    Returns score (0–40), evidence, and sampled code content dict.
-    """
-    score = 0
-    evidence: list = []
-    warnings: list = []
-    code_samples: dict = {}
-
-    all_paths = [item.get("path", "") for item in file_tree if item.get("type") == "blob"]
-    basenames  = {os.path.basename(p).lower(): p for p in all_paths}
-    code_paths = [p for p in all_paths if _ext(p.lower()) in CODE_EXTENSIONS]
-
-    # Signal A: Substantial code files > 1 KB (max 10 pts)
-    substantial = [p for p in code_paths if _file_size(p, file_tree) > 1024]
-    if len(substantial) >= 5:
-        score += 10
-        evidence.append(f"{len(substantial)} substantial code files found (>1 KB) (+10)")
-    elif len(substantial) >= 1:
-        pts = max(4, len(substantial) * 2)
-        score += pts
-        evidence.append(f"{len(substantial)} substantial code file(s) found (+{pts})")
-    elif code_paths:
-        score += 2
-        evidence.append(f"{len(code_paths)} code file(s) found (small/stub) (+2)")
-    else:
-        warnings.append("No code files found in repository")
-        return {"score": 0, "evidence": evidence, "warnings": warnings, "code_samples": {}}
-
-    # Signal B: Training entrypoint (max 8 pts)
-    train_matches = [p for b, p in basenames.items() if b in ENTRYPOINT_NAMES]
-    if train_matches:
-        score += 8
-        evidence.append(f"Training entrypoint found: {', '.join(train_matches[:2])} (+8)")
-        code_samples.update(_fetch_code_samples(train_matches[:1], owner, repo))
-
-    # Signal C: Inference / eval script (max 5 pts)
-    infer_matches = [p for b, p in basenames.items() if b in INFERENCE_NAMES]
-    if infer_matches:
-        score += 5
-        evidence.append(f"Inference/eval script found: {', '.join(infer_matches[:2])} (+5)")
-        code_samples.update(_fetch_code_samples(infer_matches[:1], owner, repo))
-
-    # Signal D: Model definition (max 8 pts)
-    model_matches = [p for b, p in basenames.items() if b in MODEL_NAMES]
-    model_dirs    = [
-        p for p in all_paths
-        if p.lower().startswith(("models/", "model/", "src/model"))
-        and _ext(p.lower()) in CODE_EXTENSIONS
-    ]
-    if model_matches or model_dirs:
-        score += 8
-        combined = (model_matches + model_dirs)[:2]
-        evidence.append(f"Model definition found: {', '.join(combined)} (+8)")
-        code_samples.update(_fetch_code_samples((model_matches + model_dirs)[:1], owner, repo))
-
-    # Signal E: Dataset loader (max 5 pts)
-    data_base_patterns = {"dataset.py", "dataloader.py", "data_loader.py", "data_utils.py"}
-    data_matches = [p for b, p in basenames.items() if b in data_base_patterns]
-    data_dir_files = [
-        p for p in all_paths
-        if p.lower().startswith("data/") and _ext(p.lower()) in CODE_EXTENSIONS
-    ]
-    if data_matches or data_dir_files:
-        score += 5
-        evidence.append("Dataset loader / data directory found (+5)")
-
-    # Signal F: Config file (max 4 pts)
-    config_matches = [p for b, p in basenames.items() if b in CONFIG_NAMES]
-    if config_matches:
-        score += 4
-        evidence.append(f"Config file found: {config_matches[0]} (+4)")
-
-    score = min(score, MAX_CODE_CONTENT)
-    return {
-        "score": score,
-        "evidence": evidence,
-        "warnings": warnings,
-        "code_samples": code_samples,
-    }
-
-
-def _fetch_code_samples(paths: list, owner: str, repo: str) -> dict:
-    """Fetch raw content of a few key files for deeper analysis (capped at 8 KB each)."""
-    samples: dict = {}
-    try:
-        from agents.coral_utils import get_coral_client
-        coral = get_coral_client()
-        if not coral.available:
-            raise RuntimeError("Coral not available")
-        for path in paths[:3]:
+    content = None
+    coral = get_coral_client()
+    if coral.available:
+        try:
             res = coral.sql(f"""
-                SELECT content_text AS content
+                SELECT content_text as content
                 FROM github.contents
                 WHERE owner = '{owner}' AND repo = '{repo}' AND path = '{path}'
             """)
             if res and "results" in res and res["results"]:
-                content = res["results"][0].get("content", "")
-                if content:
-                    samples[path] = content[:8000]
-    except Exception as exc:
-        logger.debug("Code sample fetch failed: %s", exc)
-    return samples
-
-
-# ---------------------------------------------------------------------------
-# Check 5: Paper-to-Code Concept Alignment
-# ---------------------------------------------------------------------------
-
-
-def _check_concept_alignment(
-    concepts: list, file_tree: list, code_samples: dict
-) -> dict:
-    """
-    Check whether the paper's unique technical vocabulary appears in the codebase
-    (filenames, function/class names, comments).
-    Returns score (0–20) and evidence.
-    """
-    score = 0
-    evidence: list = []
-    warnings: list = []
-
-    if not concepts:
-        warnings.append("No paper concepts extracted for alignment check")
-        return {"score": 0, "evidence": evidence, "warnings": warnings}
-
-    # Build a searchable corpus from filenames + code symbols + comments
-    filenames_blob = " ".join(
-        os.path.basename(item.get("path", "")).lower().replace("_", " ").replace("-", " ")
-        for item in file_tree
-    )
-
-    symbol_parts: list = []
-    for content in code_samples.values():
-        symbol_parts.extend(re.findall(r"\bdef\s+(\w+)", content))
-        symbol_parts.extend(re.findall(r"\bclass\s+(\w+)", content))
-        symbol_parts.extend(re.findall(r"#\s*(.+)", content))
-    symbols_blob = " ".join(symbol_parts).lower()
-
-    corpus = filenames_blob + " " + symbols_blob
-
-    matched: list = []
-    for concept in concepts:
-        concept_lower = concept.lower()
-        if concept_lower in corpus:
-            matched.append(concept)
-        else:
-            # Try individual meaningful words in the concept
-            words = [w for w in concept_lower.split() if len(w) >= 4]
-            if words and any(w in corpus for w in words):
-                matched.append(concept)
-
-    hit_ratio = len(matched) / max(len(concepts), 1)
-
-    if hit_ratio >= 0.6:
-        score = 20
-        evidence.append(
-            f"High concept alignment: {len(matched)}/{len(concepts)} paper concepts "
-            f"found in codebase ({hit_ratio:.0%}) (+20)"
-        )
-    elif hit_ratio >= 0.4:
-        score = 12
-        evidence.append(
-            f"Moderate concept alignment: {len(matched)}/{len(concepts)} "
-            f"concepts found ({hit_ratio:.0%}) (+12)"
-        )
-    elif hit_ratio >= 0.2:
-        score = 6
-        evidence.append(
-            f"Low concept alignment: {len(matched)}/{len(concepts)} "
-            f"concepts found ({hit_ratio:.0%}) (+6)"
-        )
-    else:
-        warnings.append(
-            f"Weak concept alignment: only {len(matched)}/{len(concepts)} "
-            "paper concepts found in codebase"
-        )
-
-    return {"score": score, "evidence": evidence, "warnings": warnings}
-
-
-# ---------------------------------------------------------------------------
-# Check 6: Completeness
-# ---------------------------------------------------------------------------
-
-
-def _check_completeness(file_tree: list, code_samples: dict) -> dict:
-    """
-    Assess whether the implementation appears complete and not stubbed out.
-    Returns score (0–20), signals dict, and evidence.
-    """
-    score = 0
-    evidence: list = []
-    warnings: list = []
-    signals: dict = {}
-
-    all_paths = [item.get("path", "") for item in file_tree if item.get("type") == "blob"]
-    basenames  = {os.path.basename(p).lower() for p in all_paths}
-    folder_set = {p.split("/")[0].lower() for p in all_paths if "/" in p}
-
-    # A: Training entrypoint (4 pts)
-    signals["has_training_entrypoint"] = bool(basenames & ENTRYPOINT_NAMES)
-    if signals["has_training_entrypoint"]:
-        score += 4
-        evidence.append("Training entrypoint present (+4)")
-
-    # B: Inference entrypoint (4 pts)
-    signals["has_inference_entrypoint"] = bool(basenames & INFERENCE_NAMES)
-    if signals["has_inference_entrypoint"]:
-        score += 4
-        evidence.append("Inference / eval entrypoint present (+4)")
-
-    # C: Dependency declaration files (3 pts)
-    signals["has_dependency_files"] = bool(basenames & DEPENDENCY_FILES)
-    if signals["has_dependency_files"]:
-        score += 3
-        evidence.append("Dependency file(s) present (requirements.txt / setup.py / etc.) (+3)")
-
-    # D: Config files (2 pts)
-    signals["has_config_files"] = bool(basenames & CONFIG_NAMES)
-    if signals["has_config_files"]:
-        score += 2
-        evidence.append("Config file(s) present (+2)")
-
-    # E: Results / experiments / checkpoints folder (2 pts)
-    results_dirs = {"results", "experiments", "outputs", "logs", "checkpoints", "runs"}
-    signals["has_results_folder"] = bool(folder_set & results_dirs)
-    if signals["has_results_folder"]:
-        score += 2
-        evidence.append("Results / experiments folder present (+2)")
-
-    # F: No TODO / stub / placeholder patterns (3 pts; penalised if found)
-    stub_count = sum(
-        len(re.findall(pat, content, re.IGNORECASE | re.MULTILINE))
-        for content in code_samples.values()
-        for pat in STUB_PATTERNS
-    )
-    signals["stub_count"] = stub_count
-    if stub_count == 0:
-        score += 3
-        evidence.append("No TODO / stub / placeholder patterns detected in sampled code (+3)")
-    elif stub_count <= 3:
-        score += 1
-        warnings.append(f"Minor stubs detected ({stub_count} occurrence(s))")
-    else:
-        warnings.append(
-            f"Significant stub / TODO count ({stub_count}) — implementation may be incomplete"
-        )
-
-    # G: Average code file size (2 pts)
-    code_items = [
-        item for item in file_tree
-        if _ext(item.get("path", "").lower()) in CODE_EXTENSIONS
-    ]
-    avg_size = (
-        sum(item.get("size", 0) or 0 for item in code_items) / len(code_items)
-        if code_items else 0
-    )
-    signals["avg_code_file_size_bytes"] = int(avg_size)
-    if avg_size > 5000:
-        score += 2
-        evidence.append(f"Code files are substantial (avg {int(avg_size/1024)} KB) (+2)")
-    elif avg_size > 1000:
-        score += 1
-        evidence.append("Code files are moderately sized (+1)")
-
-    score = min(score, MAX_COMPLETENESS)
-    return {"score": score, "evidence": evidence, "warnings": warnings, "signals": signals}
-
-
-# ---------------------------------------------------------------------------
-# Check 7: Relevance Ratio by File Inspection
-# ---------------------------------------------------------------------------
-
-
-def _check_relevance_ratio(file_tree: list, concepts: list) -> dict:
-    """
-    Classify code files (core / utility / junk / third-party) and compute a
-    relevance ratio.  Returns score (0–10) and evidence.
-    """
-    all_paths  = [item.get("path", "") for item in file_tree if item.get("type") == "blob"]
-    code_paths = [p for p in all_paths if _ext(p.lower()) in CODE_EXTENSIONS]
-
-    _CORE = re.compile(
-        r"\b(model|train|loss|network|arch|module|layer|encoder|decoder|head|"
-        r"attention|transformer|conv|rnn|lstm|gnn|diffus|vae|gan|embed)\b",
-        re.I,
-    )
-    _UTIL = re.compile(
-        r"\b(util|helper|io|logger|metric|eval|hook|callback|viz|plot|visual)\b",
-        re.I,
-    )
-    _JUNK = re.compile(
-        r"(test_|__pycache__|\.egg|node_modules|\.pyc|setup\.cfg|\.github)",
-        re.I,
-    )
-    _THIRD = re.compile(
-        r"(vendor/|third.party/|extern/|external/|thirdparty/)",
-        re.I,
-    )
-
-    concept_tokens = {
-        t for c in concepts for t in c.lower().split() if len(t) >= 4
-    }
-
-    core, utility, junk, third_party = [], [], [], []
-
-    for path in code_paths:
-        bname = os.path.basename(path).lower()
-        if _THIRD.search(path):
-            third_party.append(path)
-        elif _JUNK.search(path):
-            junk.append(path)
-        elif _CORE.search(bname) or any(t in bname for t in concept_tokens):
-            core.append(path)
-        else:
-            utility.append(path)
-
-    usable = len(code_paths) - len(junk) - len(third_party)
-    ratio  = len(core) / max(usable, 1)
-    score  = min(MAX_RELEVANCE_RATIO, int(ratio * MAX_RELEVANCE_RATIO * 1.5))
-
-    evidence: list = []
-    if ratio >= 0.4:
-        evidence.append(
-            f"Good relevance ratio: {len(core)}/{usable} code files are core "
-            f"implementation ({ratio:.0%}) (+{score})"
-        )
-    elif ratio >= 0.2:
-        evidence.append(f"Moderate relevance ratio ({ratio:.0%}) (+{score})")
-
-    return {
-        "score": score,
-        "evidence": evidence,
-        "file_stats": {
-            "core_files":        len(core),
-            "utility_files":     len(utility),
-            "junk_files":        len(junk),
-            "third_party_files": len(third_party),
-            "relevance_ratio":   round(ratio, 2),
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# Check 8: Execution Sanity
-# ---------------------------------------------------------------------------
-
-
-def _check_execution_static(file_tree: list, code_samples: dict) -> dict:
-    """
-    Static analysis only (no cloning).  Always runs.
-    Returns score (0–5) and evidence.
-    """
-    score = 0
-    evidence: list = []
-    warnings: list = []
-
-    # A: Successfully parse at least one code file with the ast module (2 pts)
-    for path, content in code_samples.items():
-        if not content:
-            continue
-        try:
-            tree = ast.parse(content)
-            imports = {
-                node.names[0].name.split(".")[0]
-                for node in ast.walk(tree)
-                if isinstance(node, ast.Import)
-            }
-            from_imports = {
-                (node.module or "").split(".")[0]
-                for node in ast.walk(tree)
-                if isinstance(node, ast.ImportFrom)
-            }
-            meaningful = (imports | from_imports) - {
-                "", "os", "sys", "re", "math", "json", "time", "logging", "typing",
-            }
-            if meaningful:
-                score += 2
-                evidence.append(
-                    f"'{os.path.basename(path)}' has valid imports: "
-                    f"{', '.join(list(meaningful)[:5])} (+2)"
-                )
-                break
-        except SyntaxError as exc:
-            warnings.append(
-                f"Syntax error detected in '{os.path.basename(path)}': {exc}"
-            )
-
-    # B: Runnable __main__ block present (3 pts)
-    for path, content in code_samples.items():
-        if "if __name__" in content or "__main__" in content:
-            score += 3
-            evidence.append(
-                f"Runnable __main__ block found in '{os.path.basename(path)}' (+3)"
-            )
-            break
-
-    score = min(score, 5)   # Static tier: max 5 pts
-    return {"score": score, "evidence": evidence, "warnings": warnings}
-
-
-def _check_execution_dynamic(owner: str, repo: str) -> dict:
-    """
-    Dynamic execution check (opt-in, disabled by default).
-    Shallow-clones the repo to a temp dir and attempts to parse the main Python
-    file.  Returns score_delta (–5 to +5) and evidence.
-    """
-    evidence: list = []
-    warnings: list = []
-    score_delta = 0
-
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            clone = subprocess.run(
-                ["git", "clone", "--depth=1",
-                 f"https://github.com/{owner}/{repo}.git", tmpdir],
-                capture_output=True, text=True, timeout=60,
-            )
-            if clone.returncode != 0:
-                warnings.append(
-                    f"Could not clone repo for dynamic check: "
-                    f"{clone.stderr[:200]}"
-                )
-                return {"score_delta": 0, "evidence": evidence, "warnings": warnings}
-
-            evidence.append("Repo cloned successfully for dynamic check")
-
-            py_files = [f for f in os.listdir(tmpdir) if f.endswith(".py")]
-            if py_files:
-                target = os.path.join(tmpdir, py_files[0])
-                parse_run = subprocess.run(
-                    ["python", "-c",
-                     f"import ast; ast.parse(open(r'{target}').read())"],
-                    capture_output=True, text=True, timeout=30,
-                )
-                if parse_run.returncode == 0:
-                    score_delta = 5
-                    evidence.append(
-                        f"'{py_files[0]}' parses cleanly (dynamic check) (+5)"
-                    )
-                else:
-                    score_delta = -5
-                    warnings.append(
-                        f"Dynamic check: '{py_files[0]}' has parse errors"
-                    )
-
-    except subprocess.TimeoutExpired:
-        warnings.append("Dynamic execution check timed out (60 s)")
-    except Exception as exc:
-        warnings.append(f"Dynamic execution check failed: {exc}")
-
-    return {"score_delta": score_delta, "evidence": evidence, "warnings": warnings}
-
-
-# ---------------------------------------------------------------------------
-# Check 9: Official vs Unofficial Classifier
-# ---------------------------------------------------------------------------
-
-
-def _classify_official(
-    owner: str,
-    repo: str,
-    readme: str,
-    description: str,
-    paper_json: dict,
-    contributors: list,
-) -> dict:
-    """
-    Classify the repo as official / unofficial / unclear.
-    Returns score (0–10), classification dict, evidence, and warnings.
-    """
-    score = 0
-    evidence: list = []
-    warnings: list = []
-    signals_for: list = []
-    signals_against: list = []
-
-    readme_lower = (readme + " " + description).lower()
-    authors = paper_json.get("authors", [])
-
-    # Official: "official implementation" phrases (max 4 pts)
-    for phrase in OFFICIAL_PHRASES:
-        if phrase in readme_lower:
-            signals_for.append(f"README contains: '{phrase}'")
-            score += 4
-            evidence.append(f"Official implementation phrase detected: '{phrase}' (+4)")
-            break
-
-    # Official: arXiv link in README (max 2 pts)
-    arxiv_id = paper_json.get("arxiv_id", "")
-    if arxiv_id and arxiv_id in readme_lower:
-        signals_for.append(f"arXiv ID '{arxiv_id}' present in README")
-        score += 2
-        evidence.append("Paper arXiv link present in README (+2)")
-
-    # Official: owner name matches author / affiliation (max 3 pts)
-    owner_lower = owner.lower()
-    author_tokens: list = []
-    for author in authors:
-        if isinstance(author, dict):
-            author_tokens.append((author.get("last", "") or "").lower())
-            author_tokens.append((author.get("affiliation", "") or "").lower())
-        elif isinstance(author, str):
-            parts = author.strip().split()
-            author_tokens.append(parts[-1].lower() if parts else "")
-    if any(t and t in owner_lower for t in author_tokens):
-        signals_for.append(f"Repo owner '{owner}' matches an author / affiliation")
-        score += 3
-        evidence.append("Repo owner matches paper author / affiliation (+3)")
-
-    # Official: known research lab / org (max 1 pt)
-    known_labs = {
-        "google", "deepmind", "openai", "meta", "facebook", "microsoft",
-        "huggingface", "stanford", "mit", "berkeley", "cmu", "oxford",
-        "cambridge", "alibaba", "baidu", "nvidia", "aws", "apple",
-    }
-    if owner_lower in known_labs or any(lab in owner_lower for lab in known_labs):
-        signals_for.append(f"Owner '{owner}' is a known research lab / org")
-        score += 1
-        evidence.append("Repo owned by a known research organisation (+1)")
-
-    # Unofficial: wording signals (penalty –2)
-    for phrase in UNOFFICIAL_PHRASES:
-        if phrase in readme_lower:
-            signals_against.append(f"README contains: '{phrase}'")
-            score = max(0, score - 2)
-            warnings.append(f"Unofficial signal detected in README: '{phrase}'")
-            break
-
-    # Derive label
-    if score >= 6:
-        label, conf = "official", "high"
-    elif score >= 3:
-        label, conf = "unclear", "medium"
-    else:
-        label, conf = "unofficial", "low"
-
-    score = min(score, MAX_OFFICIAL)
-
-    classification = {
-        "label":            label,
-        "confidence":       conf,
-        "label_confidence": conf,    # used for official_likelihood top-level field
-        "signals_for":      signals_for,
-        "signals_against":  signals_against,
-    }
-
-    return {
-        "score":          score,
-        "classification": classification,
-        "evidence":       evidence,
-        "warnings":       warnings,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Concept extraction helpers
-# ---------------------------------------------------------------------------
-
-
-def _extract_paper_concepts(paper_json: dict) -> list:
-    """
-    Extract key technical concepts from paper JSON.
-    Returns a deduplicated list (max 30 items).
-    """
-    concepts: set = set()
-
-    title    = paper_json.get("title", "")
-    abstract = paper_json.get("abstract", "")
-    keywords = paper_json.get("keywords", [])
-
-    # From explicit keywords field
-    for kw in keywords:
-        if isinstance(kw, str) and len(kw) >= 3:
-            concepts.add(kw.strip().lower())
-
-    # Model / acronym names from title (CamelCase or ALL_CAPS)
-    for word in re.findall(r"\b[A-Z][A-Za-z0-9]{1,12}\b", title):
-        if len(word) >= 3:
-            concepts.add(word.lower())
-
-    # From abstract: multi-word noun phrases + frequent content words
-    if abstract:
-        # Capitalised 2–3 word phrases (likely proper names / model names)
-        for np in re.findall(r"\b(?:[A-Z][a-z]+\s+){1,2}[A-Z][a-z]+\b", abstract):
-            if len(np) >= 6:
-                concepts.add(np.lower())
-
-        stop_words = {
-            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-            "have", "has", "had", "do", "does", "did", "will", "would", "could",
-            "should", "may", "might", "can", "for", "and", "nor", "but", "or",
-            "yet", "so", "at", "by", "from", "in", "of", "on", "to", "with",
-            "as", "this", "that", "these", "those", "we", "our", "it", "its",
-            "which", "such", "also", "than", "more", "both", "each", "show",
-            "propose", "paper", "approach", "method", "results", "using", "based",
-            "new", "model", "data", "use", "used", "work", "proposed", "shown",
-        }
-        words = [re.sub(r"[^a-z0-9]", "", w) for w in abstract.lower().split()]
-        words = [w for w in words if w not in stop_words and len(w) > 4]
-        freq: dict = {}
-        for w in words:
-            freq[w] = freq.get(w, 0) + 1
-        for w, _ in sorted(freq.items(), key=lambda x: x[1], reverse=True)[:10]:
-            concepts.add(w)
-
-    # Known benchmark / dataset names
-    text_lower = (title + " " + abstract).lower()
-    for ds in KNOWN_DATASETS:
-        if ds in text_lower:
-            concepts.add(ds)
-
-    return list(concepts)[:30]
-
-
-def _extract_abbreviation(title: str) -> str:
-    """
-    Extract the primary model abbreviation from a paper title.
-
-    Examples:
-        "BERT: Pre-training..."   → "BERT"
-        "Attention Is All You Need" → "AIAYN"
-    """
-    # Leading named acronym (e.g. "BERT:", "ViT:", "GPT-4:")
-    m = re.match(r"^([A-Z][A-Za-z0-9]{1,12})\b", title)
-    if m:
-        candidate = m.group(1)
-        if len(candidate) >= 2:
-            return candidate
-
-    # All-caps words anywhere in title
-    caps_words = re.findall(r"\b[A-Z]{2,10}\b", title)
-    if caps_words:
-        return caps_words[0]
-
-    # Initials from meaningful title words
-    skip = {"the", "a", "an", "of", "in", "on", "for", "and", "with", "via", "is"}
-    words = [w for w in title.split() if len(w) > 1 and w.lower() not in skip]
-    if len(words) >= 3:
-        return "".join(w[0] for w in words[:8]).upper()
+                content = res["results"][0].get("content") or res["results"][0].get("content_text")
+        except Exception as e:
+            logger.debug(f"Coral fetch failed for {path}: {e}")
+
+    if not content:
+        # Fallback to GitHub REST API content fetch
+        content = _fetch_github_file_direct(owner, repo, path)
+
+    if content is not None:
+        _fetched_content_cache[key] = content
+    return content
+
+
+def _fetch_readme(owner: str, repo: str, subdir: Optional[str] = None) -> str:
+    """Fetch README.md file content from specific subdirectory or root, checking directory lists first."""
+    files = _get_directory_contents(owner, repo, subdir)
+    
+    # 1. Search in subdirectory first if present
+    if subdir:
+        readme_name = next((f for f in files if f.lower().startswith("readme")), None)
+        if readme_name:
+            path = f"{subdir}/{readme_name}"
+            content = _fetch_cached_file(owner, repo, path)
+            if content:
+                return content
+
+    # 2. Fall back to root-level search
+    root_files = _get_directory_contents(owner, repo, None)
+    readme_name = next((f for f in root_files if f.lower().startswith("readme")), None)
+    if readme_name:
+        return _fetch_cached_file(owner, repo, readme_name) or ""
 
     return ""
 
 
-# ---------------------------------------------------------------------------
-# Fuzzy & embedding helpers
-# ---------------------------------------------------------------------------
+def _fetch_requirements(owner: str, repo: str, subdir: Optional[str] = None) -> str:
+    """Fetch requirements.txt / setup.py dependencies from specific subdirectory or root, checking directory lists first."""
+    
+    # 1. Search in subdirectory first if present
+    if subdir:
+        files = _get_directory_contents(owner, repo, subdir)
+        # Check requirements.txt
+        reqs_name = next((f for f in files if "requirement" in f.lower() and f.lower().endswith(".txt")), None)
+        if reqs_name:
+            return _fetch_cached_file(owner, repo, f"{subdir}/{reqs_name}") or ""
+        # Check setup.py
+        setup_name = next((f for f in files if f.lower() == "setup.py"), None)
+        if setup_name:
+            return _fetch_cached_file(owner, repo, f"{subdir}/{setup_name}") or ""
+
+    # 2. Fall back to root-level search
+    root_files = _get_directory_contents(owner, repo, None)
+    reqs_name = next((f for f in root_files if "requirement" in f.lower() and f.lower().endswith(".txt")), None)
+    if reqs_name:
+        return _fetch_cached_file(owner, repo, reqs_name) or ""
+
+    setup_name = next((f for f in root_files if f.lower() == "setup.py"), None)
+    if setup_name:
+        return _fetch_cached_file(owner, repo, setup_name) or ""
+
+    return ""
 
 
-def _fuzzy_ratio(a: str, b: str) -> float:
-    """Compute fuzzy similarity (0.0–1.0). Uses rapidfuzz if available."""
+def _fetch_github_file_direct(owner: str, repo: str, path: str) -> Optional[str]:
+    """Helper to fetch a file's content directly from the GitHub API using requests."""
+    import requests
+    headers = {}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and "dummy" not in token.lower() and "your_" not in token.lower():
+        headers["Authorization"] = f"token {token}"
     try:
-        from rapidfuzz import fuzz
-        return max(
-            fuzz.partial_ratio(a, b) / 100.0,
-            fuzz.token_sort_ratio(a, b) / 100.0,
+        resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}/contents/{path}",
+            headers=headers, timeout=10
         )
-    except ImportError:
-        words_a = set(a.split())
-        words_b = set(b.split())
-        if not words_a:
-            return 0.0
-        return len(words_a & words_b) / len(words_a)
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                if data.get("encoding") == "base64":
+                    import base64
+                    return base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+                elif data.get("download_url"):
+                    dl_resp = requests.get(data["download_url"], timeout=10)
+                    if dl_resp.status_code == 200:
+                        return dl_resp.text
+    except Exception as e:
+        logger.debug(f"GitHub API fetch of {path} failed: {e}")
+    return None
 
 
-# Module-level cache for the sentence-transformer model
-_sentence_model = None
+def _extract_paper_keywords(paper_json: dict) -> List[str]:
+    """Extract 5-7 core technical keywords from paper metadata."""
+    if paper_json.get("keywords"):
+        return paper_json["keywords"]
+
+    abstract = paper_json.get("abstract", "")
+    title = paper_json.get("title", "")
+    
+    stop_words = {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "can", "for", "and", "nor", "but", "or",
+        "yet", "so", "at", "by", "from", "in", "of", "on", "to", "with",
+        "as", "this", "that", "these", "those", "we", "our", "it", "its",
+        "which", "such", "also", "than", "more", "both", "each", "show",
+        "propose", "paper", "approach", "method", "results", "using", "based",
+        "new", "model", "data", "use", "used", "work", "proposed", "shown",
+    }
+    
+    text = (title + " " + abstract).lower()
+    words = re.findall(r'[a-zA-Z]{4,}', text)
+    words = [w for w in words if w not in stop_words]
+
+    freq = {}
+    for w in words:
+        freq[w] = freq.get(w, 0) + 1
+
+    sorted_words = sorted(freq.items(), key=lambda x: x[1], reverse=True)
+    return [w for w, _ in sorted_words[:7]]
 
 
-def _embedding_similarity(text_a: str, text_b: str) -> float:
+def _detect_paper_frameworks(paper_json: dict) -> List[str]:
+    """Detect expected deep learning frameworks from paper text."""
+    text = (paper_json.get("title", "") + " " + paper_json.get("abstract", "")).lower()
+    frameworks = []
+    if "pytorch" in text or " torch" in text:
+        frameworks.append("PyTorch")
+    if "tensorflow" in text or " keras" in text or " tf " in text:
+        frameworks.append("TensorFlow")
+    if "jax" in text:
+        frameworks.append("JAX")
+        
+    if not frameworks:
+        frameworks.append("PyTorch")
+    return frameworks
+
+
+def _extract_codebase_terms(paper_json: dict) -> List[str]:
     """
-    Compute cosine similarity between two texts using sentence-transformers.
-    Uses 'all-MiniLM-L6-v2' (small, fast, ~80 MB).
-    Returns 0.0 gracefully if the library is not installed.
+    Extract unique technical names from paper text representing losses, models,
+    datasets, algorithms, benchmarks, and metrics for codebase alignment matching.
+    Scans title, abstract, keywords, and first 15k characters of full_text to build a robust query set.
     """
-    if not text_a or not text_b:
-        return 0.0
-    try:
-        import numpy as np
-        from sentence_transformers import SentenceTransformer
+    terms = set()
+    title = paper_json.get("title", "") or ""
+    abstract = paper_json.get("abstract", "") or ""
+    keywords = paper_json.get("keywords", []) or []
+    full_text = paper_json.get("full_text", "") or ""
+    
+    # Combined text for scanning
+    text = f"{title} {abstract} " + " ".join(keywords)
+    if full_text:
+        text += " " + full_text[:15000]
 
-        global _sentence_model
-        if _sentence_model is None:
-            _sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
+    # 1. Losses (e.g. MSELoss, CrossEntropyLoss, ActorLoss, smooth_l1_loss)
+    for match in re.findall(r"\b[a-zA-Z0-9_-]*(?:loss|Loss)\b", text):
+        if len(match) > 3 and match.lower() != "loss":
+            terms.add(match)
+            
+    # 2. Model/Layer architectures (e.g. MultiHeadAttention, ActorNet, TransformerEncoder, LSTM, ResNet)
+    model_patterns = [
+        r"\b\w*(?:Net|Network)\b", 
+        r"\b\w*Attention\b", 
+        r"\b\w*Layer\b", 
+        r"\b\w*(?:Encoder|Decoder)\b",
+        r"\b\w*(?:Module|Block)\b",
+        r"\b(?:ResNet|ViT|VGG|DenseNet|EfficientNet|BERT|GPT|RoBERTa|T5|BART|LSTM|GRU|RNN|CNN|MLP|GNN|GCN|GAT)\d*\b"
+    ]
+    for pat in model_patterns:
+        for match in re.findall(pat, text):
+            if len(match) > 3 and match.lower() not in ["net", "network", "attention", "layer", "encoder", "decoder", "module", "block"]:
+                terms.add(match)
+                
+    # 3. Capitalized/Uppercase Algorithms, Datasets, and Benchmarks (e.g. DAPO, FinRL, PPO, DDPG, SAC, TD3, DQN)
+    for match in re.findall(r"\b[A-Z][A-Z0-9a-z_-]{2,12}\b", text):
+        if match.lower() not in ["the", "and", "for", "with", "this", "model", "paper", "data", "test", "train", "loss", "code"]:
+            terms.add(match)
 
-        embs = _sentence_model.encode([text_a, text_b], normalize_embeddings=True)
-        return float(np.dot(embs[0], embs[1]))
-    except Exception:
-        return 0.0
+    # 4. Specific Datasets/Benchmarks ending with dataset, dataset names, or common acronyms
+    dataset_patterns = [
+        r"\b[A-Za-z0-9_-]+(?:[Dd]ataset|[Dd]ata)\b",
+        r"\b(?:CIFAR\d*|ImageNet|MNIST|SQuAD|WikiText|GLUE|SuperGLUE|MMLU|HumanEval|GSM8K|MATH|CoNLL|IMDB|PennTreebank|MSCOCO|LFW|WMT)\b"
+    ]
+    for pat in dataset_patterns:
+        for match in re.findall(pat, text):
+            if len(match) > 3 and match.lower() not in ["dataset", "data"]:
+                terms.add(match)
+
+    # 5. Reinforcement Learning & Optimization Algorithms
+    rl_algo_patterns = [
+        r"\b(?:PPO|DPO|DAPO|DDPG|SAC|TD3|DQN|A3C|A2C|TRPO|REINFORCE|QLearning|SARSA)\b",
+        r"\b(?:Adam|AdamW|SGD|RMSprop|Adagrad|Adadelta|LBFGS)\b"
+    ]
+    for pat in rl_algo_patterns:
+        for match in re.findall(pat, text, re.IGNORECASE):
+            terms.add(match)
+
+    # 6. Evaluation Metrics & Benchmarks
+    metric_terms = [
+        "accuracy", "precision", "recall", "f1", "rmse", "mae", "mse", "bleu", "rouge", 
+        "perplexity", "auc", "roc", "map", "fid", "exact_match", "sharpe", "sortino", 
+        "cumulative_return", "max_drawdown", "mdd", "backtest"
+    ]
+    for t in metric_terms:
+        if re.search(rf"\b{t}\b", text, re.IGNORECASE):
+            terms.add(t)
+
+    # 7. Direct Keywords
+    for kw in keywords:
+        if len(kw) > 3:
+            terms.add(kw)
+            
+    return list(terms)
 
 
-# ---------------------------------------------------------------------------
-# Scoring / label helpers
-# ---------------------------------------------------------------------------
-
-
-def _score_to_verdict(score: int) -> str:
-    if score >= BAND_HIGHLY_CONFIDENT:
-        return "highly_confident"
-    if score >= BAND_STRONG_MATCH:
-        return "strong_match"
-    if score >= BAND_PLAUSIBLE:
-        return "plausible"
-    if score >= BAND_WEAK_MATCH:
-        return "weak_match"
-    return "unrelated"
-
-
-def _score_to_label(raw: int, max_raw: int) -> str:
-    """Map a raw/max pair to 'low' / 'medium' / 'high'."""
-    ratio = raw / max(max_raw, 1)
-    if ratio >= 0.65:
-        return "high"
-    if ratio >= 0.35:
-        return "medium"
-    return "low"
-
-
-def _empty_result() -> dict:
+def _error_result(repo_url: Optional[str], message: str) -> dict:
     return {
-        "relevance_score":             0,
-        "verdict":                     "unrelated",
-        "contains_code":               False,
-        "paper_match":                 "weak",
-        "implementation_completeness": "low",
-        "official_likelihood":         "low",
-        "overall_confidence_score":    0,
-        "score_breakdown": {
-            "title_similarity":    0,
-            "readme_semantics":    0,
-            "code_content":        0,
-            "concept_alignment":   0,
-            "completeness":        0,
-            "relevance_ratio":     0,
-            "execution_sanity":    0,
-            "official_classifier": 0,
+        "repo_url": repo_url,
+        "confidence_score": 0.0,
+        "classification": "UNKNOWN",
+        "validator_scores": {
+            "semantic": 0.0,
+            "concept": 0.0,
+            "dependency": 0.0
         },
-        "evidence":               [],
-        "warnings":               [],
-        "checks_run":             [],
-        "file_stats":             {},
-        "official_classification":{},
-        "completeness_signals":   {},
-        "coral_queries_used":     0,
+        "error": message
     }
-
-
-# ---------------------------------------------------------------------------
-# Misc helpers (unchanged from v1)
-# ---------------------------------------------------------------------------
-
-
-def _normalize_text(text: str) -> str:
-    """Collapse whitespace and strip."""
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _parse_github_url(url: str):
-    """Extract (owner, repo) from a GitHub URL."""
-    if not url:
-        return None, None
-    for pattern in [
-        r"github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$",
-        r"github\.com/([^/]+)/([^/]+?)(?:/.*)?$",
-    ]:
-        m = re.search(pattern, url)
-        if m:
-            return m.group(1), m.group(2)
-    return None, None
-
-
-def _ext(path: str) -> str:
-    """Return the lowercased file extension."""
-    return os.path.splitext(path)[1].lower()
-
-
-def _file_size(path: str, file_tree: list) -> int:
-    """Look up a file's size from the cached file tree."""
-    path_lower = path.lower()
-    for item in file_tree:
-        if item.get("path", "").lower() == path_lower:
-            return item.get("size", 0) or 0
-    return 0
-
-
-# ---------------------------------------------------------------------------
-# Formatting helper (updated verdict labels)
-# ---------------------------------------------------------------------------
-
-
-def format_relevance_badge(result: dict) -> str:
-    """Return a human-readable relevance badge string."""
-    score   = result.get("relevance_score", 0)
-    verdict = result.get("verdict", "unrelated")
-    badges  = {
-        "highly_confident": f"🎯 Highly Confident ({score}/100)",
-        "strong_match":     f"✅ Strong Match ({score}/100)",
-        "plausible":        f"🟡 Plausible Match ({score}/100)",
-        "weak_match":       f"⚠️  Weak Match ({score}/100)",
-        "unrelated":        f"❌ Unrelated ({score}/100)",
-    }
-    return badges.get(verdict, f"❓ Unknown ({score}/100)")
-
-
-# ---------------------------------------------------------------------------
-# CLI / standalone test
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import json
-    logging.basicConfig(level=logging.INFO)
-
-    test_paper = {
-        "title": "Attention Is All You Need",
-        "arxiv_id": "1706.03762",
-        "authors": [
-            {"first": "Ashish", "last": "Vaswani"},
-            {"first": "Noam",   "last": "Shazeer"},
-        ],
-        "keywords": ["transformer", "attention", "self-attention", "encoder", "decoder"],
-        "abstract": (
-            "The dominant sequence transduction models are based on complex recurrent "
-            "or convolutional neural networks that include an encoder and a decoder. "
-            "We propose a new simple network architecture, the Transformer, based solely "
-            "on attention mechanisms, dispensing with recurrence and convolutions entirely."
-        ),
-    }
-
-    result = validate_repo_relevance(
-        "https://github.com/tensorflow/tensor2tensor",
-        test_paper,
-    )
-    print(json.dumps(result, indent=2))
-    print(f"\n{format_relevance_badge(result)}")

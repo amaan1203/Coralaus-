@@ -6,6 +6,15 @@ GitHub connector. Pure SQL queries — no LLM.
 
 Input:  GitHub repo URL
 Output: health_score (0–100) + signals JSON
+
+Scoring signals (v2):
+  - Commit recency           (primary decay signal)
+  - Issue resolution ratio   (closed / total — replaces raw open count)
+  - Star velocity            (stars/year — replaces hard star cutoff)
+  - Fork count               (community adoption bonus)
+  - Contributor count        (bus-factor / maintenance risk)
+  - CI/CD presence           (quality signal)
+  - Archived flag            (instant zero)
 """
 
 import re
@@ -42,9 +51,14 @@ def check_repo_health(repo_url: str) -> dict:
     signals = {
         "last_commit_days_ago": None,
         "open_issues": None,
+        "closed_issues": None,
         "stars": None,
         "forks": None,
         "archived": None,
+        "year": None,
+        "repo_age_days": None,
+        "contributor_count": None,
+        "has_ci": None,
     }
 
     # Query 1: Last commit date
@@ -63,6 +77,7 @@ def check_repo_health(repo_url: str) -> dict:
                 try:
                     commit_date = datetime.fromisoformat(commit_date_str.replace("Z", "+00:00")).date()
                     signals["last_commit_days_ago"] = (date.today() - commit_date).days
+                    signals["year"] = str(commit_date.year)
                 except (ValueError, TypeError):
                     pass
 
@@ -78,9 +93,9 @@ def check_repo_health(repo_url: str) -> dict:
         if rows:
             signals["open_issues"] = rows[0].get("open_issues", 0)
 
-    # Query 3: Repo metadata (stars, forks, archived) — use repos_get for fast index lookup
+    # Query 3: Repo metadata (stars, forks, archived, created_at)
     meta_result = coral.sql(f"""
-        SELECT stargazers_count, forks_count, archived
+        SELECT stargazers_count, forks_count, archived, created_at
         FROM github.repos_get
         WHERE owner = '{owner}' AND repo = '{repo}'
     """)
@@ -90,6 +105,13 @@ def check_repo_health(repo_url: str) -> dict:
             signals["stars"] = rows[0].get("stargazers_count", 0)
             signals["forks"] = rows[0].get("forks_count", 0)
             signals["archived"] = rows[0].get("archived", False)
+            created_at = rows[0].get("created_at")
+            if created_at:
+                try:
+                    created_date = datetime.fromisoformat(created_at.replace("Z", "+00:00")).date()
+                    signals["repo_age_days"] = (date.today() - created_date).days
+                except (ValueError, TypeError):
+                    pass
 
     # If we couldn't get key signals via Coral (due to auth failure), use GitHub API fallback
     if signals["stars"] is None or signals["last_commit_days_ago"] is None:
@@ -100,8 +122,13 @@ def check_repo_health(repo_url: str) -> dict:
     health_score = compute_health_score(
         last_commit_days=signals.get("last_commit_days_ago"),
         open_issues=signals.get("open_issues", 0),
+        closed_issues=signals.get("closed_issues"),
         stars=signals.get("stars", 0),
+        forks=signals.get("forks", 0),
         archived=signals.get("archived", False),
+        repo_age_days=signals.get("repo_age_days"),
+        contributor_count=signals.get("contributor_count"),
+        has_ci=signals.get("has_ci", False),
     )
 
     result = {
@@ -122,11 +149,26 @@ def check_repo_health(repo_url: str) -> dict:
 def compute_health_score(
     last_commit_days: Optional[int],
     open_issues: int = 0,
+    closed_issues: Optional[int] = None,
     stars: int = 0,
-    archived: bool = False
+    forks: int = 0,
+    archived: bool = False,
+    repo_age_days: Optional[int] = None,
+    contributor_count: Optional[int] = None,
+    has_ci: Optional[bool] = None,
 ) -> int:
     """
     Compute a health score (0–100) from repo signals.
+
+    Scoring breakdown:
+      - Starts at 100, penalties applied, bonuses can recover up to 100.
+      - Archived repos always score 0.
+      - Commit recency is the heaviest single signal.
+      - Issue resolution ratio replaces the raw open-issue count.
+      - Star velocity (stars/year) replaces the hard star cutoff so new
+        official repos are not unfairly penalised.
+      - Forks, contributor count, and CI presence provide smaller bonuses/penalties.
+
     Pure Python — no LLM needed.
     """
     if archived:
@@ -134,25 +176,76 @@ def compute_health_score(
 
     score = 100
 
-    # Commit recency
+    # ------------------------------------------------------------------
+    # 1. Commit recency  (max penalty: −50)
+    # ------------------------------------------------------------------
     if last_commit_days is not None:
-        if last_commit_days > 730:
+        if last_commit_days > 730:    # > 2 years
             score -= 50
-        elif last_commit_days > 365:
+        elif last_commit_days > 365:  # > 1 year
             score -= 25
-        elif last_commit_days > 180:
+        elif last_commit_days > 180:  # > 6 months
             score -= 10
 
-    # Issue load
-    if open_issues is not None:
+    # ------------------------------------------------------------------
+    # 2. Issue resolution ratio  (max penalty: −20)
+    #    Replaces raw open_issues count — a repo that closes most issues
+    #    is healthy even with a large backlog.
+    # ------------------------------------------------------------------
+    open_issues = open_issues or 0
+    closed_issues_count = closed_issues if closed_issues is not None else 0
+    total_issues = open_issues + closed_issues_count
+
+    if total_issues > 0 and closed_issues is not None:
+        close_rate = closed_issues_count / total_issues
+        if close_rate < 0.3:
+            score -= 20   # severely under-resolved backlog
+        elif close_rate < 0.5:
+            score -= 10   # moderate backlog pressure
+        # ≥ 0.5 close rate → no penalty
+    else:
+        # No closed-issue data available — fall back to raw count
         if open_issues > 100:
             score -= 20
         elif open_issues > 50:
             score -= 10
 
-    # Popularity (low stars = less maintained)
-    if stars is not None and stars < 10:
-        score -= 10
+    # ------------------------------------------------------------------
+    # 3. Star velocity  (max penalty: −10)
+    #    stars/year avoids penalising new official repos with few stars.
+    # ------------------------------------------------------------------
+    if stars is not None:
+        if repo_age_days and repo_age_days > 30:
+            stars_per_year = stars / max(1.0, repo_age_days / 365.0)
+            if stars < 10 and stars_per_year < 10:
+                score -= 10   # truly low-traction and new
+            # else: recent repo or growing fast — no penalty
+        elif stars < 10:
+            score -= 10   # no age data, use absolute cutoff as before
+
+    # ------------------------------------------------------------------
+    # 4. Forks  (bonus: +5)
+    #    High fork count signals community adoption.
+    # ------------------------------------------------------------------
+    if forks and forks > 50:
+        score = min(100, score + 5)
+
+    # ------------------------------------------------------------------
+    # 5. Contributor count  (penalty/bonus: −10 / +5)
+    #    Single-maintainer repos carry higher bus-factor risk.
+    # ------------------------------------------------------------------
+    if contributor_count is not None:
+        if contributor_count >= 5:
+            score = min(100, score + 5)   # community-maintained
+        elif contributor_count == 1:
+            score -= 10                   # single point of failure
+
+    # ------------------------------------------------------------------
+    # 6. CI/CD presence  (bonus: +5)
+    #    A working CI pipeline is a proxy for code quality and maintenance.
+    # ------------------------------------------------------------------
+    if has_ci:
+        score = min(100, score + 5)
 
     return max(0, score)
 
@@ -198,7 +291,15 @@ def _score_emoji(score: int) -> str:
 
 
 def _github_api_fallback(owner: str, repo: str) -> dict:
-    """Fallback: use GitHub REST API directly when Coral is unavailable."""
+    """
+    Fallback: use GitHub REST API directly when Coral is unavailable.
+
+    Makes up to 4 API calls:
+      1. /repos/{owner}/{repo}             — core metadata
+      2. /search/issues?q=...state=closed  — closed issue count (resolution ratio)
+      3. /repos/{owner}/{repo}/contributors — contributor count (bus-factor)
+      4. /repos/{owner}/{repo}/contents/.github/workflows — CI/CD presence
+    """
     import requests
     import os
 
@@ -210,13 +311,18 @@ def _github_api_fallback(owner: str, repo: str) -> dict:
     signals = {
         "last_commit_days_ago": None,
         "open_issues": None,
+        "closed_issues": None,
         "stars": None,
         "forks": None,
         "archived": None,
+        "year": None,
+        "repo_age_days": None,
+        "contributor_count": None,
+        "has_ci": None,
     }
 
+    # --- Call 1: Core repo metadata ---
     try:
-        # Get repo metadata
         resp = requests.get(
             f"https://api.github.com/repos/{owner}/{repo}",
             headers=headers, timeout=10
@@ -233,16 +339,70 @@ def _github_api_fallback(owner: str, repo: str) -> dict:
                 try:
                     push_date = datetime.fromisoformat(pushed_at.replace("Z", "+00:00")).date()
                     signals["last_commit_days_ago"] = (date.today() - push_date).days
+                    signals["year"] = str(push_date.year)
+                except (ValueError, TypeError):
+                    pass
+
+            created_at = data.get("created_at")
+            if created_at:
+                try:
+                    created_date = datetime.fromisoformat(created_at.replace("Z", "+00:00")).date()
+                    signals["repo_age_days"] = (date.today() - created_date).days
                 except (ValueError, TypeError):
                     pass
     except Exception as e:
-        logger.error(f"GitHub API fallback failed: {e}")
+        logger.error(f"GitHub API (repo metadata) failed: {e}")
+
+    # --- Call 2: Closed issue count (for resolution ratio) ---
+    try:
+        resp = requests.get(
+            "https://api.github.com/search/issues",
+            params={"q": f"repo:{owner}/{repo} type:issue state:closed", "per_page": 1},
+            headers=headers, timeout=10,
+        )
+        if resp.status_code == 200:
+            signals["closed_issues"] = resp.json().get("total_count", 0)
+            logger.info(f"  Closed issues: {signals['closed_issues']}")
+    except Exception as e:
+        logger.warning(f"GitHub API (closed issues) failed: {e}")
+
+    # --- Call 3: Contributor count (bus-factor) ---
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}/contributors",
+            params={"per_page": 30, "anon": "true"},
+            headers=headers, timeout=10,
+        )
+        if resp.status_code == 200:
+            contributors = resp.json()
+            # If the page is full (30), there are likely more — flag as "30+"
+            signals["contributor_count"] = len(contributors) if len(contributors) < 30 else 30
+            logger.info(f"  Contributors: {signals['contributor_count']}")
+    except Exception as e:
+        logger.warning(f"GitHub API (contributors) failed: {e}")
+
+    # --- Call 4: CI/CD presence ---
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}/contents/.github/workflows",
+            headers=headers, timeout=10,
+        )
+        signals["has_ci"] = resp.status_code == 200
+        logger.info(f"  CI/CD present: {signals['has_ci']}")
+    except Exception as e:
+        logger.warning(f"GitHub API (CI check) failed: {e}")
+        signals["has_ci"] = False
 
     health_score = compute_health_score(
         last_commit_days=signals.get("last_commit_days_ago"),
         open_issues=signals.get("open_issues", 0),
+        closed_issues=signals.get("closed_issues"),
         stars=signals.get("stars", 0),
+        forks=signals.get("forks", 0),
         archived=signals.get("archived", False),
+        repo_age_days=signals.get("repo_age_days"),
+        contributor_count=signals.get("contributor_count"),
+        has_ci=signals.get("has_ci", False),
     )
 
     return {

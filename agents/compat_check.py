@@ -78,14 +78,18 @@ def check_compatibility(repo_url: str, owner: str = None, repo: str = None) -> d
     # Detect the repo's actual entrypoint script
     entrypoint = _detect_entrypoint(owner, repo)
 
+    # Fetch README for Dockerfile build instructions (e.g. "install open_spiel from source")
+    readme_content = _fetch_readme(owner, repo)
+
     result = {
         "requirements_found": True,
-        "dep_files": {name: content[:500] for name, content in dep_files.items()},
+        "dep_files": dict(dep_files),  # Pass full content — LLM needs complete dependency lists
         "conflicts": [],
         "warnings": warnings,
         "clean": not reconstructed,  # If reconstructed, mark as not clean to trigger Dockerfile gen
         "analysis_method": "reconstructed" if reconstructed else None,
         "entrypoint": entrypoint,
+        "readme_content": readme_content[:5000] if readme_content else "",
     }
 
     # Step 2: Try automated pip dry-run on all requirement files
@@ -145,7 +149,7 @@ def _fetch_dep_files_coral(owner: str, repo: str) -> dict:
               AND path = '{filename}'
         """)
         if result and "results" in result and result["results"]:
-            content = result["results"][0].get("content")
+            content = result["results"][0].get("content") or result["results"][0].get("content_text")
             if content:
                 dep_files[filename] = content
 
@@ -179,7 +183,7 @@ def _fetch_dep_files_coral(owner: str, repo: str) -> dict:
                           AND path = '{path}'
                     """)
                     if content_result and "results" in content_result and content_result["results"]:
-                        content = content_result["results"][0].get("content")
+                        content = content_result["results"][0].get("content") or content_result["results"][0].get("content_text")
                         if content:
                             dep_files[path] = content
                             logger.info(f"Fetched {path} from tree search ({len(content)} bytes)")
@@ -297,7 +301,7 @@ def _pip_dry_run(requirements_content: str) -> dict:
         # Run pip dry-run
         proc = subprocess.run(
             ["pip", "install", "--dry-run", "-r", tmp_path],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, encoding="utf-8", timeout=60
         )
 
         result["raw_output"] = proc.stderr + proc.stdout
@@ -704,6 +708,25 @@ def _ast_scan_imports(owner: str, repo: str) -> dict:
     return {'requirements.txt': synthetic_content}
 
 
+def _fetch_readme(owner: str, repo: str) -> str:
+    """Fetch README.md content via Coral or GitHub API for build instructions."""
+    coral = get_coral_client()
+    if coral.available:
+        try:
+            res = coral.sql(f"""
+                SELECT content_text as content
+                FROM github.contents
+                WHERE owner = '{owner}' AND repo = '{repo}' AND path = 'README.md'
+            """)
+            if res and "results" in res and res["results"]:
+                content = res["results"][0].get("content") or res["results"][0].get("content_text")
+                if content:
+                    return content
+        except Exception as e:
+            logger.debug(f"Coral query for README.md failed: {e}")
+    return _fetch_file_content_github(owner, repo, "README.md") or ""
+
+
 def _empty_result(reason: str) -> dict:
     return {
         "requirements_found": False,
@@ -713,6 +736,7 @@ def _empty_result(reason: str) -> dict:
         "clean": True,
         "analysis_method": None,
         "entrypoint": None,
+        "readme_content": "",
     }
 
 

@@ -27,7 +27,7 @@ class CoralClient:
             try:
                 result = subprocess.run(
                     [p, "--version"],
-                    capture_output=True, text=True, timeout=5
+                    capture_output=True, text=True, encoding="utf-8", timeout=5
                 )
                 if result.returncode == 0:
                     self.coral_path = p
@@ -61,7 +61,7 @@ class CoralClient:
         try:
             result = subprocess.run(
                 [self.coral_path, "sql", "--format", "json", query],
-                capture_output=True, text=True, timeout=timeout
+                capture_output=True, text=True, encoding="utf-8", timeout=timeout
             )
 
             if result.returncode != 0:
@@ -72,7 +72,13 @@ class CoralClient:
             if not output:
                 return {"results": []}
 
-            return json.loads(output)
+            parsed = json.loads(output)
+            if isinstance(parsed, list):
+                return {"results": parsed}
+            elif isinstance(parsed, dict) and "results" in parsed:
+                return parsed
+            else:
+                return {"results": [parsed]}
 
         except subprocess.TimeoutExpired:
             logger.error(f"Coral query timed out after {timeout}s")
@@ -93,7 +99,7 @@ class CoralClient:
         try:
             result = subprocess.run(
                 [self.coral_path, "sql", query],
-                capture_output=True, text=True, timeout=timeout
+                capture_output=True, text=True, encoding="utf-8", timeout=timeout
             )
             if result.returncode != 0:
                 logger.error(f"Coral query failed: {result.stderr}")
@@ -110,7 +116,7 @@ class CoralClient:
             cmd.extend([f"--{key}", str(value)])
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=30)
             if result.returncode == 0:
                 logger.info(f"Source '{source_type}' added successfully")
                 return True
