@@ -1,6 +1,5 @@
 """
-coralaus — Streamlit UI
-Interactive web interface for the paper analysis pipeline.
+coralaus — Streamlit UI  (Premium Redesign)
 """
 
 import os
@@ -10,7 +9,6 @@ import logging
 import streamlit as st
 from pathlib import Path
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
@@ -32,296 +30,834 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("requests").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# --- Page Config ---
 st.set_page_config(
-    page_title="Coralaus — Research Paper Implementation Finder",
-    page_icon="🚢",
+    page_title="Coralaus — ML Paper → Docker",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# --- Custom CSS (Premium Dark Theme) ---
+# ══════════════════════════════════════════════════════════════════════
+#  GLOBAL CSS + JS
+# ══════════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 
-    /* Global Typography & Colors */
-    .stApp {
-        font-family: 'Outfit', sans-serif;
-        background-color: #0B0E14;
-        color: #E2E8F0;
-    }
-    
-    /* Scrollbar */
-    ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-    }
-    ::-webkit-scrollbar-track {
-        background: #0B0E14;
-    }
-    ::-webkit-scrollbar-thumb {
-        background: #2D3748;
-        border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-        background: #4A5568;
-    }
+/* ─── RESET & BASE ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
 
-    /* Animated Header */
-    @keyframes gradientBG {
-        0% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
-        100% { background-position: 0% 50%; }
-    }
-    
-    .main-header {
-        background: linear-gradient(-45deg, #0f172a, #1e293b, #0c4a6e, #1e1b4b);
-        background-size: 400% 400%;
-        animation: gradientBG 15s ease infinite;
-        padding: 3rem 2rem;
-        border-radius: 24px;
-        margin-bottom: 2.5rem;
-        border: 1px solid rgba(56, 189, 248, 0.2);
-        box-shadow: 0 10px 30px -10px rgba(14, 165, 233, 0.3);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .main-header::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: radial-gradient(circle at 50% 0%, rgba(56, 189, 248, 0.15), transparent 70%);
-        pointer-events: none;
-    }
+html, body {
+    margin: 0; padding: 0;
+    background: #030712 !important;
+    font-family: 'Inter', sans-serif;
+    color: #e2e8f0;
+    overflow-x: hidden;
+}
 
-    .main-header h1 {
-        color: #f8fafc;
-        font-size: 3.5rem;
-        font-weight: 700;
-        margin: 0;
-        letter-spacing: -0.02em;
-    }
-    
-    .main-header h1 span {
-        background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
+/* Streamlit scaffolding overrides */
+.stApp {
+    background: transparent !important;
+    font-family: 'Inter', sans-serif;
+}
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 4rem;
+    max-width: 1200px;
+    position: relative;
+    z-index: 1;
+}
+[data-testid="stSidebar"] { position: relative; z-index: 10; }
+[data-testid="stSidebar"] > div:first-child {
+    background: rgba(3, 7, 18, 0.92) !important;
+    border-right: 1px solid rgba(255,255,255,0.06);
+    backdrop-filter: blur(20px);
+}
 
-    .main-header p {
-        color: #94a3b8;
-        font-size: 1.25rem;
-        margin-top: 0.75rem;
-        font-weight: 300;
-    }
+/* ─── CURSOR AURA (fixed, painted on body via JS) ──────────── */
+/* We paint directly on body background via JS — no extra div needed */
 
-    /* Sidebar Badges */
-    .status-badge {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 10px 16px;
-        background: rgba(30, 41, 59, 0.5);
-        border-radius: 12px;
-        margin-bottom: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        font-size: 0.95rem;
-        font-weight: 500;
-    }
-    
-    .dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        box-shadow: 0 0 10px currentColor;
-    }
-    .dot.green { background-color: #10b981; color: #10b981; }
-    .dot.red { background-color: #ef4444; color: #ef4444; }
-    .dot.yellow { background-color: #f59e0b; color: #f59e0b; }
+/* ─── GRID BACKGROUND ──────────────────────────────────────── */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background-image:
+        linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+}
 
-    /* Compact Metrics */
-    .metric-tile {
-        background: rgba(30, 41, 59, 0.5);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        border-radius: 12px;
-        padding: 16px;
-        text-align: center;
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-    .metric-tile:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 20px -8px rgba(56, 189, 248, 0.2);
-        border-color: rgba(56, 189, 248, 0.3);
-    }
-    .metric-val { font-size: 2rem; font-weight: 700; color: #f8fafc; line-height: 1; margin-bottom: 4px; }
-    .metric-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+/* ─── SCROLLBAR ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.3); border-radius: 99px; }
 
-    /* Pipeline Stepper */
-    .stepper {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        background: rgba(15, 23, 42, 0.6);
-        padding: 16px 24px;
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        margin-bottom: 1rem;
-        backdrop-filter: blur(10px);
-    }
-    .step-num {
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 600;
-        font-size: 1rem;
-    }
-    .step-active .step-num { background: #38bdf8; color: #0f172a; box-shadow: 0 0 15px rgba(56, 189, 248, 0.5); }
-    .step-done .step-num { background: #10b981; color: #0f172a; }
-    .step-error .step-num { background: #ef4444; color: white; }
-    .step-pending .step-num { background: #334155; color: #94a3b8; }
-    
-    .step-text { font-weight: 500; font-size: 1.05rem; color: #f8fafc; }
-    
-    /* Code Blocks */
-    .stCodeBlock {
-        border-radius: 12px !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    }
-    .stCodeBlock code {
-        font-family: 'Fira Code', monospace !important;
-        font-size: 0.9rem !important;
-    }
+/* ─── HERO / HEADER ─────────────────────────────────────────── */
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50%       { transform: translateY(-8px); }
+}
+@keyframes shimmer-text {
+    0%   { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+}
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(28px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes badgePop {
+    from { opacity: 0; transform: scale(0.8) translateY(10px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes borderGlow {
+    0%, 100% { border-color: rgba(99,102,241,0.25); box-shadow: 0 0 0 0 rgba(99,102,241,0.1); }
+    50%       { border-color: rgba(99,102,241,0.5); box-shadow: 0 0 30px 4px rgba(99,102,241,0.12); }
+}
 
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: transparent;
-    }
-    .stTabs [data-baseweb="tab"] {
-        padding-top: 16px;
-        padding-bottom: 16px;
-        padding-left: 24px;
-        padding-right: 24px;
-        background: rgba(30, 41, 59, 0.3);
-        border-radius: 12px 12px 0 0;
-        border: 1px solid transparent;
-        border-bottom: none;
-        color: #94a3b8;
-    }
-    .stTabs [aria-selected="true"] {
-        background: rgba(30, 41, 59, 0.8) !important;
-        color: #38bdf8 !important;
-        border-color: rgba(56, 189, 248, 0.3) !important;
-        border-bottom-color: rgba(30, 41, 59, 0.8) !important;
-    }
+.hero {
+    position: relative;
+    padding: 4rem 3rem 3.5rem;
+    border-radius: 28px;
+    margin-bottom: 2.5rem;
+    background: rgba(9, 12, 25, 0.7);
+    border: 1px solid rgba(99,102,241,0.2);
+    backdrop-filter: blur(24px);
+    overflow: hidden;
+    animation: borderGlow 5s ease-in-out infinite;
+}
 
-    /* Empty State Features */
-    .feature-card {
-        background: rgba(15, 23, 42, 0.6);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        border-radius: 20px;
-        padding: 2rem;
-        height: 100%;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        backdrop-filter: blur(10px);
-    }
-    .feature-card:hover {
-        transform: translateY(-5px);
-        background: rgba(30, 41, 59, 0.8);
-        border-color: rgba(56, 189, 248, 0.4);
-        box-shadow: 0 20px 40px -15px rgba(56, 189, 248, 0.15);
-    }
-    .feature-icon {
-        font-size: 2.5rem;
-        margin-bottom: 1rem;
-        background: linear-gradient(135deg, #38bdf8, #818cf8);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    
-    /* Health Badge */
-    .health-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 16px;
-        border-radius: 24px;
-        font-weight: 600;
-        font-size: 1rem;
-    }
-    .health-green { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
-    .health-yellow { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
-    .health-orange { background: rgba(249, 115, 22, 0.15); color: #f97316; border: 1px solid rgba(249, 115, 22, 0.3); }
-    .health-red { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+/* Multi-colour blobs inside hero */
+.hero::before {
+    content: '';
+    position: absolute;
+    top: -60px; left: -60px;
+    width: 380px; height: 380px;
+    background: radial-gradient(circle, rgba(99,102,241,0.22) 0%, transparent 70%);
+    border-radius: 50%;
+    pointer-events: none;
+    filter: blur(40px);
+    animation: float 8s ease-in-out infinite;
+}
+.hero::after {
+    content: '';
+    position: absolute;
+    bottom: -80px; right: -40px;
+    width: 320px; height: 320px;
+    background: radial-gradient(circle, rgba(14,165,233,0.18) 0%, transparent 70%);
+    border-radius: 50%;
+    pointer-events: none;
+    filter: blur(50px);
+    animation: float 11s ease-in-out infinite reverse;
+}
 
-    /* Status Spinner */
-    .stSpinner > div > div {
-        border-color: #38bdf8 transparent transparent transparent !important;
-    }
+.hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 14px;
+    background: rgba(99,102,241,0.1);
+    border: 1px solid rgba(99,102,241,0.3);
+    border-radius: 99px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #a5b4fc;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 1.4rem;
+    animation: badgePop 0.6s ease both;
+}
+.hero-badge .dot-pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #6366f1;
+    box-shadow: 0 0 8px #6366f1;
+    animation: pulseDot 1.8s ease-in-out infinite;
+}
+@keyframes pulseDot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.4; transform: scale(0.7); }
+}
+
+.hero-title {
+    font-size: clamp(3rem, 6vw, 5.5rem);
+    font-weight: 900;
+    line-height: 1.05;
+    letter-spacing: -0.04em;
+    margin: 0 0 1.2rem 0;
+    background: linear-gradient(135deg,
+        #ffffff 0%,
+        #c7d2fe 30%,
+        #818cf8 55%,
+        #38bdf8 80%,
+        #ffffff 100%);
+    background-size: 300% 300%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: shimmer-text 5s linear infinite, fadeUp 0.7s ease both 0.1s;
+}
+
+.hero-sub {
+    font-size: 1.15rem;
+    color: #64748b;
+    font-weight: 400;
+    line-height: 1.7;
+    max-width: 580px;
+    margin: 0;
+    animation: fadeUp 0.7s ease both 0.25s;
+}
+
+.hero-chips {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 2rem;
+    animation: fadeUp 0.7s ease both 0.4s;
+}
+.chip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 14px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 99px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #94a3b8;
+    transition: all 0.2s;
+}
+.chip:hover {
+    background: rgba(99,102,241,0.1);
+    border-color: rgba(99,102,241,0.3);
+    color: #c7d2fe;
+}
+
+/* ─── GLASS CARD ───────────────────────────────────────────── */
+.glass-card {
+    background: rgba(9, 12, 25, 0.6);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 20px;
+    padding: 1.8rem;
+    backdrop-filter: blur(16px);
+    transition: border-color 0.3s, box-shadow 0.3s, transform 0.3s;
+}
+.glass-card:hover {
+    border-color: rgba(99,102,241,0.3);
+    box-shadow: 0 0 40px -10px rgba(99,102,241,0.15);
+    transform: translateY(-3px);
+}
+
+/* ─── SIDEBAR ──────────────────────────────────────────────── */
+.sys-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #334155;
+    margin-bottom: 12px;
+    margin-top: 20px;
+}
+.status-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 14px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
+    margin-bottom: 6px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: #94a3b8;
+    transition: background 0.2s, border-color 0.2s;
+}
+.status-row:hover {
+    background: rgba(99,102,241,0.06);
+    border-color: rgba(99,102,241,0.15);
+}
+.led {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.led.g { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.7); }
+.led.r { background: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.7); }
+.led.y { background: #eab308; box-shadow: 0 0 8px rgba(234,179,8,0.7); }
+
+.metric-box {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px; padding: 14px;
+    text-align: center;
+    transition: transform 0.2s, border-color 0.2s;
+}
+.metric-box:hover {
+    transform: translateY(-2px);
+    border-color: rgba(99,102,241,0.25);
+}
+.metric-num   { font-size: 1.8rem; font-weight: 800; color: #f1f5f9; line-height: 1; }
+.metric-label { font-size: 0.68rem; color: #475569; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; margin-top: 4px; }
+
+/* ─── PIPELINE STEPPER ─────────────────────────────────────── */
+@keyframes pulseRing {
+    0%   { box-shadow: 0 0 0 0 rgba(99,102,241,0.6); }
+    70%  { box-shadow: 0 0 0 10px rgba(99,102,241,0); }
+    100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
+}
+@keyframes stepSlide {
+    from { opacity: 0; transform: translateX(-16px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+.step-card {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 14px 18px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.05);
+    margin-bottom: 8px;
+    backdrop-filter: blur(12px);
+    animation: stepSlide 0.4s ease both;
+    transition: border-color 0.3s;
+}
+.step-card.active {
+    background: rgba(99,102,241,0.07);
+    border-color: rgba(99,102,241,0.25);
+}
+.step-card.done {
+    background: rgba(34,197,94,0.04);
+    border-color: rgba(34,197,94,0.12);
+}
+.step-card.error {
+    background: rgba(239,68,68,0.05);
+    border-color: rgba(239,68,68,0.2);
+}
+.step-card.pending {
+    background: rgba(255,255,255,0.02);
+    border-color: rgba(255,255,255,0.04);
+}
+
+.step-icon {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.85rem; font-weight: 700; flex-shrink: 0;
+    margin-top: 1px;
+}
+.step-card.active  .step-icon { background: #6366f1; color: #fff; animation: pulseRing 1.5s infinite; }
+.step-card.done    .step-icon { background: #22c55e; color: #fff; }
+.step-card.error   .step-icon { background: #ef4444; color: #fff; }
+.step-card.pending .step-icon { background: rgba(255,255,255,0.06); color: #475569; }
+
+.step-title  { font-size: 0.95rem; font-weight: 600; color: #f1f5f9; }
+.step-detail { font-size: 0.80rem; color: #475569; margin-top: 3px; line-height: 1.5; }
+
+/* ─── ORBITAL LOADER ───────────────────────────────────────── */
+@keyframes spin1 { from { transform: rotate(0deg); }   to { transform: rotate(360deg); } }
+@keyframes spin2 { from { transform: rotate(0deg); }   to { transform: rotate(-360deg); } }
+@keyframes corePulse {
+    0%, 100% { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+    50%       { transform: translate(-50%,-50%) scale(0.75); opacity: 0.6; }
+}
+@keyframes barFlow {
+    0%   { left: -60%; }
+    100% { left: 120%; }
+}
+
+.loader-shell {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 2.4rem 2rem;
+    background: rgba(9,12,25,0.85);
+    border: 1px solid rgba(99,102,241,0.18);
+    border-radius: 22px;
+    backdrop-filter: blur(20px);
+    margin: 0.75rem 0;
+}
+.orbit-wrap {
+    position: relative; width: 72px; height: 72px; margin-bottom: 1.4rem;
+}
+.orbit-ring {
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    border: 2px solid transparent;
+}
+.orbit-ring.r1 {
+    border-top-color: #6366f1;
+    border-right-color: rgba(99,102,241,0.2);
+    animation: spin1 1.4s linear infinite;
+}
+.orbit-ring.r2 {
+    inset: 10px;
+    border-top-color: #0ea5e9;
+    border-left-color: rgba(14,165,233,0.2);
+    animation: spin2 1.0s linear infinite;
+}
+.orbit-ring.r3 {
+    inset: 20px;
+    border-bottom-color: #8b5cf6;
+    border-right-color: rgba(139,92,246,0.2);
+    animation: spin1 1.8s linear infinite;
+}
+.orbit-core {
+    position: absolute; top: 50%; left: 50%;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: linear-gradient(135deg, #6366f1, #0ea5e9);
+    box-shadow: 0 0 20px rgba(99,102,241,0.8);
+    animation: corePulse 1.6s ease-in-out infinite;
+}
+.loader-title { font-size: 1rem; font-weight: 600; color: #f1f5f9; text-align: center; }
+.loader-sub   { font-size: 0.78rem; color: #475569; text-align: center; margin-top: 4px; }
+.progress-track {
+    width: 180px; height: 2px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 99px; margin-top: 1.2rem;
+    overflow: hidden; position: relative;
+}
+.progress-fill {
+    position: absolute; top: 0; height: 100%; width: 60%;
+    background: linear-gradient(90deg, transparent, #6366f1, #0ea5e9, transparent);
+    animation: barFlow 1.3s ease-in-out infinite;
+    border-radius: 99px;
+}
+
+/* ─── CONFLICT CARDS ───────────────────────────────────────── */
+@keyframes cardIn {
+    from { opacity: 0; transform: translateY(20px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.conflict-header {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #475569;
+    margin: 1.8rem 0 1rem 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.ccard {
+    position: relative; overflow: hidden;
+    border-radius: 16px;
+    padding: 1.2rem 1.4rem;
+    margin-bottom: 10px;
+    border-left: 3px solid;
+    backdrop-filter: blur(10px);
+    animation: cardIn 0.45s ease both;
+    transition: transform 0.25s, box-shadow 0.25s;
+}
+.ccard:hover {
+    transform: translateX(5px);
+    box-shadow: -4px 0 20px -4px currentColor;
+}
+.ccard.err  { border-color: #ef4444; background: linear-gradient(120deg, rgba(239,68,68,0.08), rgba(9,12,25,0.9)); }
+.ccard.warn { border-color: #eab308; background: linear-gradient(120deg, rgba(234,179,8,0.07), rgba(9,12,25,0.9)); }
+.ccard.ok   { border-color: #22c55e; background: linear-gradient(120deg, rgba(34,197,94,0.07), rgba(9,12,25,0.9)); }
+
+.ctag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 2px 9px;
+    border-radius: 99px; margin-bottom: 8px;
+}
+.ctag.err  { background: rgba(239,68,68,0.12); color: #fca5a5; border: 1px solid rgba(239,68,68,0.2); }
+.ctag.warn { background: rgba(234,179,8,0.12);  color: #fde68a; border: 1px solid rgba(234,179,8,0.2); }
+.ctag.ok   { background: rgba(34,197,94,0.12);  color: #86efac; border: 1px solid rgba(34,197,94,0.2); }
+
+.ctext { font-size: 0.9rem; color: #cbd5e1; font-family: 'JetBrains Mono', monospace; line-height: 1.55; }
+
+.divider-arrow {
+    display: flex; align-items: center; gap: 8px;
+    margin: 10px 0;
+    color: #334155; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em;
+}
+.divider-arrow::before, .divider-arrow::after {
+    content: ''; flex: 1; height: 1px; background: rgba(255,255,255,0.05);
+}
+
+.resolution-box {
+    padding: 10px 14px;
+    background: rgba(34,197,94,0.06);
+    border: 1px solid rgba(34,197,94,0.12);
+    border-radius: 10px;
+    font-size: 0.85rem; color: #86efac; line-height: 1.5;
+    font-family: 'JetBrains Mono', monospace;
+}
+.warn-box {
+    padding: 10px 14px;
+    background: rgba(234,179,8,0.06);
+    border: 1px solid rgba(234,179,8,0.12);
+    border-radius: 10px;
+    font-size: 0.85rem; color: #fde68a; line-height: 1.5;
+}
+
+.summary-pills {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 1.4rem; padding: 14px 18px;
+    background: rgba(9,12,25,0.8);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 14px;
+}
+.pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 13px; border-radius: 99px;
+    font-size: 0.78rem; font-weight: 600;
+}
+.pill.r { background: rgba(239,68,68,0.1);  color: #fca5a5; border: 1px solid rgba(239,68,68,0.18); }
+.pill.y { background: rgba(234,179,8,0.1);  color: #fde68a; border: 1px solid rgba(234,179,8,0.18); }
+.pill.g { background: rgba(34,197,94,0.1);  color: #86efac; border: 1px solid rgba(34,197,94,0.18); }
+
+/* ─── COMPLETE BANNER ──────────────────────────────────────── */
+@keyframes completePop {
+    0%   { opacity: 0; transform: scale(0.96) translateY(-8px); }
+    60%  { transform: scale(1.01) translateY(0); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.complete-banner {
+    display: flex; align-items: center; gap: 16px;
+    padding: 1.2rem 1.8rem;
+    background: linear-gradient(135deg, rgba(34,197,94,0.08), rgba(99,102,241,0.06));
+    border: 1px solid rgba(34,197,94,0.2);
+    border-radius: 18px;
+    margin-bottom: 2rem;
+    animation: completePop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.complete-icon { font-size: 2rem; }
+.complete-title { font-size: 1.15rem; font-weight: 700; color: #f1f5f9; }
+.complete-sub   { font-size: 0.82rem; color: #475569; margin-top: 3px; }
+
+/* ─── HEALTH BADGE ─────────────────────────────────────────── */
+.health-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 7px 18px; border-radius: 99px;
+    font-weight: 600; font-size: 0.9rem; margin-top: 1rem;
+}
+.hp-g { background: rgba(34,197,94,0.1);  color: #22c55e; border: 1px solid rgba(34,197,94,0.25); }
+.hp-y { background: rgba(234,179,8,0.1);  color: #eab308; border: 1px solid rgba(234,179,8,0.25); }
+.hp-o { background: rgba(249,115,22,0.1); color: #f97316; border: 1px solid rgba(249,115,22,0.25); }
+.hp-r { background: rgba(239,68,68,0.1);  color: #ef4444; border: 1px solid rgba(239,68,68,0.25); }
+
+/* ─── FEATURE CARDS (empty state) ─────────────────────────── */
+@keyframes featureIn {
+    from { opacity: 0; transform: translateY(30px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.fcard {
+    background: rgba(9,12,25,0.65);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 22px; padding: 2rem;
+    height: 100%;
+    backdrop-filter: blur(14px);
+    transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
+    animation: featureIn 0.6s ease both;
+}
+.fcard:nth-child(2) { animation-delay: 0.1s; }
+.fcard:nth-child(3) { animation-delay: 0.2s; }
+.fcard:hover {
+    transform: translateY(-8px);
+    border-color: rgba(99,102,241,0.35);
+    box-shadow: 0 30px 60px -20px rgba(99,102,241,0.18), 0 0 0 1px rgba(99,102,241,0.1);
+    background: rgba(16,20,40,0.85);
+}
+.fcard-icon {
+    font-size: 2.2rem; margin-bottom: 1.1rem;
+    display: block; line-height: 1;
+    filter: drop-shadow(0 0 12px rgba(99,102,241,0.5));
+}
+.fcard h3 { font-size: 1.1rem; font-weight: 700; margin: 0 0 0.7rem 0; color: #f1f5f9; }
+.fcard p  { font-size: 0.88rem; color: #475569; line-height: 1.7; margin: 0; }
+
+/* ─── TABS ─────────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] { gap: 4px; background: transparent; }
+.stTabs [data-baseweb="tab"] {
+    padding: 10px 20px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 10px 10px 0 0;
+    border: 1px solid rgba(255,255,255,0.05); border-bottom: none;
+    color: #475569; font-size: 0.88rem; font-weight: 500;
+    transition: all 0.2s;
+}
+.stTabs [aria-selected="true"] {
+    background: rgba(99,102,241,0.1) !important;
+    color: #a5b4fc !important;
+    border-color: rgba(99,102,241,0.2) !important;
+}
+
+/* ─── CODE BLOCKS ──────────────────────────────────────────── */
+.stCodeBlock { border-radius: 14px !important; border: 1px solid rgba(255,255,255,0.07) !important; }
+.stCodeBlock code { font-family: 'JetBrains Mono', monospace !important; font-size: 0.85rem !important; }
+
+/* ─── FILE UPLOADER ────────────────────────────────────────── */
+[data-testid="stFileUploader"] {
+    border: 2px dashed rgba(99,102,241,0.25) !important;
+    border-radius: 16px !important;
+    background: rgba(99,102,241,0.04) !important;
+    transition: border-color 0.3s !important;
+}
+[data-testid="stFileUploader"]:hover {
+    border-color: rgba(99,102,241,0.5) !important;
+    background: rgba(99,102,241,0.07) !important;
+}
+
+/* ─── PRIMARY BUTTON ───────────────────────────────────────── */
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #6366f1, #4f46e5) !important;
+    border: none !important;
+    border-radius: 12px !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    padding: 0.65rem 1.4rem !important;
+    box-shadow: 0 4px 20px -4px rgba(99,102,241,0.5) !important;
+    transition: all 0.2s !important;
+    font-family: 'Inter', sans-serif !important;
+}
+.stButton > button[kind="primary"]:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 28px -4px rgba(99,102,241,0.65) !important;
+}
 </style>
+
+<!-- ══ CURSOR AURA JS — writes directly to body background ══ -->
+<script>
+(function () {
+    var mouseX = window.innerWidth / 2;
+    var mouseY = window.innerHeight / 2;
+    var curX   = mouseX;
+    var curY   = mouseY;
+
+    document.addEventListener('mousemove', function(e) {
+        mouseX = e.clientX;
+        mouseY = e.clientY;
+    });
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+
+    function updateAura() {
+        curX = lerp(curX, mouseX, 0.07);
+        curY = lerp(curY, mouseY, 0.07);
+
+        var px = curX + 'px';
+        var py = curY + 'px';
+
+        /* Paint directly on body — visible through every Streamlit layer */
+        document.body.style.background = [
+            'radial-gradient(ellipse 700px 500px at ' + px + ' ' + py + ', rgba(99,102,241,0.13) 0%, rgba(14,165,233,0.05) 40%, transparent 70%)',
+            'radial-gradient(ellipse 280px 200px at ' + px + ' ' + py + ', rgba(139,92,246,0.10) 0%, transparent 55%)',
+            '#030712'
+        ].join(', ');
+
+        requestAnimationFrame(updateAura);
+    }
+
+    /* Wait for DOM — Streamlit loads content slightly after script */
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', updateAura);
+    } else {
+        updateAura();
+    }
+
+    /* ── Floating particles ── */
+    function spawnParticle() {
+        var p = document.createElement('div');
+        var size = Math.random() * 3.5 + 1.5;
+        var x    = Math.random() * window.innerWidth;
+        var dur  = Math.random() * 16 + 10;
+        var delay= Math.random() * 4;
+        var colors = [
+            'rgba(99,102,241,0.55)',
+            'rgba(139,92,246,0.5)',
+            'rgba(14,165,233,0.5)',
+        ];
+        var color = colors[Math.floor(Math.random() * colors.length)];
+
+        p.style.cssText = [
+            'position:fixed',
+            'width:' + size + 'px',
+            'height:' + size + 'px',
+            'left:' + x + 'px',
+            'bottom:-10px',
+            'border-radius:50%',
+            'pointer-events:none',
+            'z-index:0',
+            'background:' + color,
+            'box-shadow: 0 0 ' + (size * 3) + 'px ' + color,
+            'opacity:0',
+            'transition:none',
+            'animation: _rise ' + dur + 's ' + delay + 's linear forwards'
+        ].join(';');
+
+        document.body.appendChild(p);
+        setTimeout(function() { if (p.parentNode) p.parentNode.removeChild(p); },
+            (dur + delay + 1) * 1000);
+    }
+
+    /* Inject particle keyframe once */
+    if (!document.getElementById('_particle_style')) {
+        var s = document.createElement('style');
+        s.id  = '_particle_style';
+        s.textContent = '@keyframes _rise { 0%{transform:translateY(0) scale(0);opacity:0} 8%{opacity:0.7} 92%{opacity:0.3} 100%{transform:translateY(-110vh) scale(1.3);opacity:0} }';
+        document.head.appendChild(s);
+    }
+
+    setInterval(spawnParticle, 1600);
+    for (var i = 0; i < 8; i++) setTimeout(spawnParticle, i * 250);
+})();
+</script>
 """, unsafe_allow_html=True)
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  COMPONENT HELPERS
+# ══════════════════════════════════════════════════════════════════════
+
+def render_loader(title: str, subtitle: str = "Please wait…") -> str:
+    return f"""
+    <div class="loader-shell">
+        <div class="orbit-wrap">
+            <div class="orbit-ring r1"></div>
+            <div class="orbit-ring r2"></div>
+            <div class="orbit-ring r3"></div>
+            <div class="orbit-core"></div>
+        </div>
+        <div class="loader-title">{title}</div>
+        <div class="loader-sub">{subtitle}</div>
+        <div class="progress-track"><div class="progress-fill"></div></div>
+    </div>
+    """
+
+
 def render_stepper(step_num, title, state="active", details=""):
-    """Render a styled pipeline step."""
-    icon = {"active": "⚡", "done": "✓", "error": "✕", "pending": "⋯"}[state]
+    icons = {"active": str(step_num), "done": "✓", "error": "✕", "pending": "·"}
+    icon  = icons.get(state, str(step_num))
     st.markdown(f"""
-    <div class="stepper step-{state}">
-        <div class="step-num">{icon if state != 'active' else step_num}</div>
-        <div style="display: flex; flex-direction: column;">
-            <div class="step-text">{title}</div>
-            {f'<div style="font-size: 0.85rem; color: #94a3b8; margin-top: 2px;">{details}</div>' if details else ''}
+    <div class="step-card {state}">
+        <div class="step-icon">{icon}</div>
+        <div>
+            <div class="step-title">{title}</div>
+            {f'<div class="step-detail">{details}</div>' if details else ''}
         </div>
     </div>
     """, unsafe_allow_html=True)
 
 
-def render_results(final_output, paper_json=None):
+def render_conflict_cards(final_output: dict):
+    conflicts = final_output.get("conflicts_found", [])
+    warnings  = final_output.get("dep_warnings", [])
+    resolved  = final_output.get("conflicts_resolved", False)
+    resolved_reqs = final_output.get("resolved_requirements", "")
+
+    if not conflicts and not warnings:
+        st.markdown("""
+        <div class="ccard ok">
+            <span class="ctag ok">✓ Clean</span>
+            <div class="ctext">No dependency conflicts or warnings detected — environment is clean and ready to build.</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    nc = len(conflicts)
+    nw = len(warnings)
+    resolved_label = "✅ All Resolved" if resolved else "⏳ Pending"
+    st.markdown(f"""
+    <div class="summary-pills">
+        <span class="pill r">🔴 {nc} Conflict{'s' if nc != 1 else ''}</span>
+        <span class="pill y">⚠️ {nw} Warning{'s' if nw != 1 else ''}</span>
+        <span class="pill g">{resolved_label}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if conflicts:
+        st.markdown('<div class="conflict-header">⚡ Hard Conflicts</div>', unsafe_allow_html=True)
+        for i, conflict in enumerate(conflicts):
+            pkg = conflict.split()[0] if conflict else ""
+            resolution_html = ""
+            if resolved:
+                hint = ""
+                for line in resolved_reqs.splitlines():
+                    if pkg.lower() in line.lower():
+                        hint = line.strip()
+                        break
+                if not hint:
+                    hint = "Version constraint adjusted and pinned by conflict resolver."
+                resolution_html = f"""
+                <div class="divider-arrow">→ resolved as</div>
+                <div class="resolution-box">🔧 {hint}</div>
+                """
+            st.markdown(f"""
+            <div class="ccard err" style="animation-delay:{i*0.07:.2f}s">
+                <span class="ctag err">⚡ Conflict #{i+1}</span>
+                <div class="ctext">{conflict}</div>
+                {resolution_html}
+            </div>
+            """, unsafe_allow_html=True)
+
+    if warnings:
+        st.markdown('<div class="conflict-header">⚠️ Dependency Warnings</div>', unsafe_allow_html=True)
+        for i, warning in enumerate(warnings):
+            delay = (len(conflicts) + i) * 0.07
+            st.markdown(f"""
+            <div class="ccard warn" style="animation-delay:{delay:.2f}s">
+                <span class="ctag warn">⚠ Warning #{i+1}</span>
+                <div class="ctext">{warning}</div>
+                <div class="divider-arrow">→ recommendation</div>
+                <div class="warn-box">🛠 Update this dependency to a recent stable release. The generated Dockerfile pins the best compatible version available.</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+def render_results(final_output: dict, paper_json: dict = None):
     if not paper_json:
+        p = final_output["paper"]
         paper_json = {
-            "title": final_output["paper"]["title"],
-            "arxiv_id": final_output["paper"].get("arxiv_id"),
-            "authors": [{"first": name.split()[0] if name.split() else "", "last": name.split()[-1] if len(name.split()) > 1 else ""} for name in final_output["paper"].get("authors", [])],
-            "year": final_output["paper"].get("year"),
-            "abstract": final_output["paper"].get("abstract", "")
+            "title": p["title"],
+            "arxiv_id": p.get("arxiv_id"),
+            "authors": p.get("authors", []),
+            "year": p.get("year"),
+            "abstract": p.get("abstract", ""),
         }
 
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown("## ✨ Analysis Complete")
-    
-    # Render Tabs
-    tab_summary, tab_docker, tab_json, tab_dl = st.tabs([
-        "📋 Summary", "🐳 Dockerfile", "📊 JSON Data", "📥 Downloads"
+    title = paper_json.get("title", "Unknown Paper")
+
+    st.markdown(f"""
+    <div class="complete-banner">
+        <div class="complete-icon">✨</div>
+        <div>
+            <div class="complete-title">Analysis Complete</div>
+            <div class="complete-sub">{title}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    tab_summary, tab_conflicts, tab_docker, tab_json, tab_dl = st.tabs([
+        "📋 Summary", "🔥 Conflicts & Warnings", "🐳 Dockerfile", "📊 Raw JSON", "📥 Export",
     ])
 
     with tab_summary:
-        st.markdown(f"### {paper_json.get('title', 'Unknown Paper')}")
+        st.markdown(f"### {title}")
         st.info(format_summary(final_output))
-        
-        # If we have repo health, show it nicely
-        if final_output.get("health"):
-            h = final_output["health"]
+
+        score = final_output.get("repo_health_score")
+        if score is not None:
+            emoji = final_output.get("health_emoji", "⚪")
+            label = final_output.get("health_label", "Unknown")
+            cls   = "g" if score >= 80 else "y" if score >= 60 else "o" if score >= 30 else "r"
+            st.markdown(f'<div class="health-pill hp-{cls}">{emoji} Repo Health: {label} ({score}/100)</div>', unsafe_allow_html=True)
+        elif final_output.get("health"):
+            h     = final_output["health"]
             score = h.get("health_score", -1)
             emoji = h.get("health_emoji", "⚪")
             label = h.get("health_label", "Unknown")
-            health_class = "green" if score >= 80 else "yellow" if score >= 60 else "orange" if score >= 30 else "red"
-            st.markdown(f'<div class="health-badge health-{health_class}">{emoji} Repo Health: {label} ({score}/100)</div>', unsafe_allow_html=True)
+            cls   = "g" if score >= 80 else "y" if score >= 60 else "o" if score >= 30 else "r"
+            st.markdown(f'<div class="health-pill hp-{cls}">{emoji} Repo Health: {label} ({score}/100)</div>', unsafe_allow_html=True)
+
+    with tab_conflicts:
+        render_conflict_cards(final_output)
 
     with tab_docker:
         if final_output.get("dockerfile"):
-            st.markdown(f"*Suggested Base Image: `{final_output.get('selected_base_image', 'N/A')}`*")
+            col_a, col_b = st.columns([1, 2])
+            with col_a:
+                st.metric("Base Image", final_output.get("selected_base_image", "N/A"))
             if final_output.get("base_image_reason"):
                 st.caption(f"Reasoning: {final_output['base_image_reason']}")
             st.code(final_output["dockerfile"], language="dockerfile")
         else:
             st.warning("No Dockerfile was generated.")
-            
         if final_output.get("implementation_script"):
             st.markdown("### 🐍 Reference Implementation")
             st.code(final_output["implementation_script"], language="python")
@@ -331,81 +867,81 @@ def render_results(final_output, paper_json=None):
 
     with tab_dl:
         st.markdown("### Export Artifacts")
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.download_button("📄 Paper JSON", data=json.dumps(paper_json, indent=2), file_name="paper.json", mime="application/json", use_container_width=True)
-        with col2:
-            st.download_button("📊 Full Result JSON", data=json.dumps(final_output, indent=2), file_name="result.json", mime="application/json", use_container_width=True)
-        with col3:
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.download_button("📄 Paper JSON",      json.dumps(paper_json, indent=2),    "paper.json",          "application/json", use_container_width=True)
+        with c2:
+            st.download_button("📊 Result JSON",     json.dumps(final_output, indent=2),  "result.json",         "application/json", use_container_width=True)
+        with c3:
             if final_output.get("dockerfile"):
-                st.download_button("🐳 Dockerfile", data=final_output["dockerfile"], file_name="Dockerfile", mime="text/plain", use_container_width=True, type="primary")
-        with col4:
+                st.download_button("🐳 Dockerfile",  final_output["dockerfile"],           "Dockerfile",          "text/plain",        use_container_width=True, type="primary")
+        with c4:
             if final_output.get("implementation_script"):
-                st.download_button("🐍 Implementation", data=final_output["implementation_script"], file_name="implementation.py", mime="text/x-python", use_container_width=True)
+                st.download_button("🐍 Implementation", final_output["implementation_script"], "implementation.py", "text/x-python", use_container_width=True)
 
 
-# --- Sidebar ---
+# ══════════════════════════════════════════════════════════════════════
+#  SIDEBAR
+# ══════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("### ⚙️ System Status")
+    st.markdown('<div class="sys-label">System Status</div>', unsafe_allow_html=True)
 
     gemini_ok = bool(os.environ.get("GEMINI_API_KEY"))
-    groq_ok = bool(os.environ.get("GROQ_API_KEY"))
+    groq_ok   = bool(os.environ.get("GROQ_API_KEY"))
     github_ok = bool(os.environ.get("GITHUB_TOKEN"))
 
-    st.markdown(f"""
-    <div class="status-badge"><div class="dot {'green' if gemini_ok else 'red'}"></div> Gemini API Key</div>
-    <div class="status-badge"><div class="dot {'green' if groq_ok else 'red'}"></div> Groq API Key</div>
-    <div class="status-badge"><div class="dot {'green' if github_ok else 'yellow'}"></div> GitHub Token</div>
-    """, unsafe_allow_html=True)
-
     coral = get_coral_client()
+    pwc   = get_s2_client()
+
     st.markdown(f"""
-    <div class="status-badge"><div class="dot {'green' if coral.available else 'yellow'}"></div> Coral CLI {'(Ready)' if coral.available else '(Fallback)'}</div>
+    <div class="status-row"><div class="led {'g' if gemini_ok else 'r'}"></div>Gemini API</div>
+    <div class="status-row"><div class="led {'g' if groq_ok else 'r'}"></div>Groq API</div>
+    <div class="status-row"><div class="led {'g' if github_ok else 'y'}"></div>GitHub Token</div>
+    <div class="status-row"><div class="led {'g' if coral.available else 'y'}"></div>Coral CLI {'(Ready)' if coral.available else '(Fallback)'}</div>
+    <div class="status-row"><div class="led {'g' if pwc.available else 'r'}"></div>Semantic Scholar</div>
     """, unsafe_allow_html=True)
 
-    pwc = get_s2_client()
-    st.markdown(f"""
-    <div class="status-badge"><div class="dot {'green' if pwc.available else 'red'}"></div> Semantic Scholar</div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="sys-label" style="margin-top:24px;">Activity</div>', unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 📊 Activity")
-    
-    if "coral_queries" not in st.session_state:
-        st.session_state.coral_queries = 0
-    if "pwc_calls" not in st.session_state:
-        st.session_state.pwc_calls = 0
+    if "coral_queries" not in st.session_state: st.session_state.coral_queries = 0
+    if "pwc_calls"     not in st.session_state: st.session_state.pwc_calls = 0
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(f"""
-        <div class="metric-tile">
-            <div class="metric-val">{st.session_state.coral_queries}</div>
-            <div class="metric-label">Coral SQL</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.markdown(f"""
-        <div class="metric-tile">
-            <div class="metric-val">{st.session_state.pwc_calls}</div>
-            <div class="metric-label">API Calls</div>
-        </div>
-        """, unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f'<div class="metric-box"><div class="metric-num">{st.session_state.coral_queries}</div><div class="metric-label">Coral SQL</div></div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown(f'<div class="metric-box"><div class="metric-num">{st.session_state.pwc_calls}</div><div class="metric-label">API Calls</div></div>', unsafe_allow_html=True)
 
 
-# --- Header ---
+# ══════════════════════════════════════════════════════════════════════
+#  HERO HEADER
+# ══════════════════════════════════════════════════════════════════════
 st.markdown("""
-<div class="main-header">
-    <h1><span>🚢</span> Coralaus</h1>
-    <p>Seamlessly transition from ML research paper to a fully reproducible Docker environment.</p>
+<div class="hero">
+    <div class="hero-badge">
+        <div class="dot-pulse"></div>
+        AI-Powered Research Tool
+    </div>
+    <h1 class="hero-title">Coralaus</h1>
+    <p class="hero-sub">
+        From ML research paper to a fully reproducible Docker environment — 
+        automatically discovered, validated, and conflict-free.
+    </p>
+    <div class="hero-chips">
+        <span class="chip">⚡ Gemini 2.0 Flash</span>
+        <span class="chip">🔍 PapersWithCode</span>
+        <span class="chip">🐙 GitHub</span>
+        <span class="chip">🐳 Docker-Ready</span>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
 
-# --- Main Content ---
+# ══════════════════════════════════════════════════════════════════════
+#  MAIN FLOW
+# ══════════════════════════════════════════════════════════════════════
 uploaded_file = st.file_uploader(
-    "📄 Upload Research Paper (PDF)",
+    "Drop your research paper PDF here",
     type=["pdf"],
     help="Upload an ML/AI research paper PDF to begin analysis",
 )
@@ -413,128 +949,113 @@ uploaded_file = st.file_uploader(
 if uploaded_file:
     os.makedirs("output", exist_ok=True)
     pdf_path = os.path.join("output", uploaded_file.name)
-    
+
     if not os.path.exists(pdf_path):
         with open(pdf_path, "wb") as f:
             f.write(uploaded_file.getvalue())
-        
-        if "final_output" in st.session_state:
-            del st.session_state.final_output
-        if "paper_json" in st.session_state:
-            del st.session_state.paper_json
-            
-    analyze_clicked = st.button("🚀 Analyze & Generate Environment", type="primary", use_container_width=True)
+        for key in ("final_output", "paper_json"):
+            st.session_state.pop(key, None)
+
     st.markdown("<br>", unsafe_allow_html=True)
-    
+    analyze_clicked = st.button("⚡ Analyze & Generate Environment", type="primary", use_container_width=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
     if analyze_clicked:
-        if "final_output" in st.session_state:
-            del st.session_state.final_output
-        if "paper_json" in st.session_state:
-            del st.session_state.paper_json
+        for key in ("final_output", "paper_json"):
+            st.session_state.pop(key, None)
 
         coral.reset_query_count()
         pwc.reset_call_count()
         total_llm_calls = {"gemini_flash": 0, "groq_llama": 0}
 
-        # === Step 1: PDF Ingestion ===
-        step1 = st.empty()
-        with step1:
-            render_stepper(1, "Parsing PDF Structure", "active", "Extracting text, sections, and metadata via GROBID")
-        
+        # ── Step 1 ──────────────────────────────────────────────
+        ph1, ld1 = st.empty(), st.empty()
+        with ph1: render_stepper(1, "Parsing PDF Structure", "active", "Extracting text, sections and metadata via GROBID")
+        with ld1: st.markdown(render_loader("Parsing PDF…", "Running GROBID structural extraction"), unsafe_allow_html=True)
+
         try:
             paper_json = parse_paper(pdf_path, os.path.join("output", "current_paper.json"))
-            with step1:
-                render_stepper(1, f"Parsed: {paper_json.get('title', 'Unknown Paper')}", "done", f"Found {len(paper_json.get('sections', []))} sections")
+            ld1.empty()
+            with ph1: render_stepper(1, f"Parsed: {paper_json.get('title','Unknown')}", "done", f"{len(paper_json.get('sections',[]))} sections extracted")
         except Exception as e:
-            with step1:
-                render_stepper(1, "PDF parsing failed", "error", str(e))
+            ld1.empty()
+            with ph1: render_stepper(1, "PDF parsing failed", "error", str(e))
             st.stop()
 
-        # === Step 2: Search ===
-        step2 = st.empty()
-        with step2:
-            render_stepper(2, "Searching Implementations", "active", "Querying Semantic Scholar & PapersWithCode")
-            
+        # ── Step 2 ──────────────────────────────────────────────
+        ph2, ld2 = st.empty(), st.empty()
+        with ph2: render_stepper(2, "Searching Implementations", "active", "Querying Semantic Scholar & PapersWithCode")
+        with ld2: st.markdown(render_loader("Searching…", "Cross-referencing PapersWithCode & GitHub"), unsafe_allow_html=True)
+
         search_result = search_implementation(paper_json)
         st.session_state.pwc_calls = pwc.get_call_count()
-        
-        if search_result["found"]:
-            with step2:
-                render_stepper(2, "Implementations Found", "done", f"Discovered {len(search_result.get('candidates', []))} potential repositories")
-        else:
-            with step2:
-                render_stepper(2, "No Implementation Found", "done", "Will generate reference code from scratch")
+        ld2.empty()
 
-        health_result = None
-        compat_result = None
-        resolver_result = None
-        generator_result = None
+        if search_result["found"]:
+            with ph2: render_stepper(2, "Implementations Found", "done", f"{len(search_result.get('candidates',[]))} candidate repositories")
+        else:
+            with ph2: render_stepper(2, "No Existing Implementation", "done", "Will generate reference code from scratch")
+
+        health_result = compat_result = resolver_result = generator_result = None
 
         if search_result["found"] and search_result.get("candidates"):
-            # === Step 2.5: Repo Validation ===
-            step25 = st.empty()
-            with step25:
-                render_stepper(3, "Validating Repositories", "active", "Evaluating match confidence")
-                
+            # ── Step 2.5 ─────────────────────────────────────
+            ph25, ld25 = st.empty(), st.empty()
+            with ph25: render_stepper(3, "Validating Repositories", "active", "Scoring semantic & concept alignment")
+            with ld25: st.markdown(render_loader("Validating…", "Running confidence scoring across candidates"), unsafe_allow_html=True)
+
             from agents.repo_validator import validate_and_rank_candidates
-            best_match, ranked_results = validate_and_rank_candidates(paper_json, search_result["candidates"])
+            best_match, _ = validate_and_rank_candidates(paper_json, search_result["candidates"])
+            ld25.empty()
 
             if best_match["confidence_score"] < 0.20:
-                search_result["found"] = False
-                search_result["repo_url"] = None
-                search_result["validation"] = best_match
-                with step25:
-                    render_stepper(3, "Low Confidence Match", "done", f"Best score {best_match['confidence_score']:.1%} is too low. Treating as mismatch.")
+                search_result.update({"found": False, "repo_url": None, "validation": best_match})
+                with ph25: render_stepper(3, "Low Confidence — Skipping", "done", f"Best score {best_match['confidence_score']:.1%} below threshold")
             else:
-                search_result["repo_url"] = best_match["repo_url"]
-                search_result["stars"] = best_match.get("stars", 0)
-                search_result["is_official"] = best_match.get("is_official", False)
-                search_result["search_method"] = best_match.get("search_method")
-                search_result["validation"] = best_match
-                with step25:
-                    render_stepper(3, f"Selected Repository: {best_match['repo_url'].split('/')[-1]}", "done", f"Confidence: {best_match['confidence_score']:.1%} ({best_match['classification']})")
+                search_result.update({
+                    "repo_url":      best_match["repo_url"],
+                    "stars":         best_match.get("stars", 0),
+                    "is_official":   best_match.get("is_official", False),
+                    "search_method": best_match.get("search_method"),
+                    "validation":    best_match,
+                })
+                with ph25: render_stepper(3, f"Selected: {best_match['repo_url'].split('/')[-1]}", "done", f"Confidence {best_match['confidence_score']:.1%} · {best_match['classification']}")
 
         if search_result["found"]:
-            # === Step 3: Health Check ===
-            step3 = st.empty()
-            with step3:
-                render_stepper(4, "Checking Repo Health", "active", "Analyzing commit history and issues via Coral SQL")
-                
+            # ── Step 3 ───────────────────────────────────────
+            ph3, ld3 = st.empty(), st.empty()
+            with ph3: render_stepper(4, "Checking Repo Health", "active", "Analyzing commit history & issues via Coral SQL")
+            with ld3: st.markdown(render_loader("Health Check…", "Running Coral SQL on GitHub data"), unsafe_allow_html=True)
+
             health_result = check_repo_health(search_result["repo_url"])
             st.session_state.coral_queries = coral.get_query_count()
-            
-            score = health_result.get("health_score", -1)
-            emoji = health_result.get("health_emoji", "⚪")
-            with step3:
-                render_stepper(4, f"Health Score: {score}/100", "done", f"{emoji} {health_result.get('health_label', 'Unknown')}")
+            ld3.empty()
 
-            # === Step 4: Dependencies ===
-            step4 = st.empty()
-            with step4:
-                render_stepper(5, "Analyzing Dependencies", "active", "Scanning for conflicts and constraints")
-                
-            compat_result = check_compatibility(
-                search_result["repo_url"],
-                health_result.get("owner"),
-                health_result.get("repo"),
-            )
+            sc = health_result.get("health_score", -1)
+            with ph3: render_stepper(4, f"Health Score: {sc}/100", "done", f"{health_result.get('health_emoji','⚪')} {health_result.get('health_label','Unknown')}")
+
+            # ── Step 4 ───────────────────────────────────────
+            ph4, ld4 = st.empty(), st.empty()
+            with ph4: render_stepper(5, "Analyzing Dependencies", "active", "Scanning for conflicts and version constraints")
+            with ld4: st.markdown(render_loader("Dependency Analysis…", "Detecting version conflicts & compatibility issues"), unsafe_allow_html=True)
+
+            compat_result = check_compatibility(search_result["repo_url"], health_result.get("owner"), health_result.get("repo"))
             st.session_state.coral_queries = coral.get_query_count()
-            
-            status_label = "Clean" if compat_result.get("clean") else f"{len(compat_result.get('conflicts', []))} conflicts detected"
-            with step4:
-                render_stepper(5, "Dependencies Analyzed", "done", status_label)
+            ld4.empty()
 
-            # === Step 5: Conflict Resolution ===
-            step5 = st.empty()
-            with step5:
-                render_stepper(6, "Generating Environment", "active", "Selecting base image and drafting Dockerfile (Groq Llama 3)")
-                
+            status_lbl = "Clean ✓" if compat_result.get("clean") else f"{len(compat_result.get('conflicts',[]))} conflicts detected"
+            with ph4: render_stepper(5, "Dependencies Analyzed", "done", status_lbl)
+
+            # ── Step 5 ───────────────────────────────────────
+            ph5, ld5 = st.empty(), st.empty()
+            with ph5: render_stepper(6, "Generating Dockerfile", "active", "LLM selecting base image & resolving conflicts")
+            with ld5: st.markdown(render_loader("Generating…", "Groq Llama 3 drafting Docker environment"), unsafe_allow_html=True)
+
             req_content = ""
             for name, content in compat_result.get("dep_files", {}).items():
-                if "requirement" in name.lower() and name.endswith('.txt'):
-                    req_content = content
-                    break
-                    
+                if "requirement" in name.lower() and name.endswith(".txt"):
+                    req_content = content; break
+
             resolver_result = resolve_conflicts(
                 req_content,
                 compat_result.get("conflicts", []),
@@ -546,25 +1067,24 @@ if uploaded_file:
             )
             total_llm_calls["groq_llama"] += 1
             st.session_state.coral_queries = coral.get_query_count()
+            ld5.empty()
 
-            with step5:
-                base_img = resolver_result.get('selected_base_image', 'Unknown')
-                render_stepper(6, "Environment Generated", "done", f"Base: {base_img}")
+            with ph5: render_stepper(6, "Environment Generated", "done", f"Base: {resolver_result.get('selected_base_image','Unknown')}")
 
         else:
-            # === Step 6: Generate from Scratch ===
-            step6 = st.empty()
-            with step6:
-                render_stepper(4, "Generating from Scratch", "active", "Cross-repo JOINs and Gemini 2.0 Flash")
-                
+            # ── Step 6 (scratch) ─────────────────────────────
+            ph6, ld6 = st.empty(), st.empty()
+            with ph6: render_stepper(4, "Generating from Scratch", "active", "Cross-repo JOINs + Gemini 2.0 Flash")
+            with ld6: st.markdown(render_loader("Synthesizing…", "Gemini generating implementation from related repos"), unsafe_allow_html=True)
+
             generator_result = generate_from_scratch(paper_json)
             st.session_state.coral_queries = coral.get_query_count()
             total_llm_calls.update(generator_result.get("llm_calls", {}))
-            
-            with step6:
-                render_stepper(4, "Code & Dockerfile Generated", "done", f"Synthesized from {len(generator_result.get('related_repos', []))} related repos")
+            ld6.empty()
 
-        # === Step 7: Final Output ===
+            with ph6: render_stepper(4, "Code & Dockerfile Generated", "done", f"Synthesized from {len(generator_result.get('related_repos',[]))} related repos")
+
+        # ── Final Build ──────────────────────────────────────
         final_output = build_output(
             paper_json=paper_json,
             search_result=search_result,
@@ -578,9 +1098,9 @@ if uploaded_file:
         save_output(final_output)
 
         st.session_state.coral_queries = coral.get_query_count()
-        st.session_state.llm_calls = total_llm_calls
-        st.session_state.final_output = final_output
-        st.session_state.paper_json = paper_json
+        st.session_state.llm_calls     = total_llm_calls
+        st.session_state.final_output  = final_output
+        st.session_state.paper_json    = paper_json
 
     if "final_output" in st.session_state:
         render_results(st.session_state.final_output, st.session_state.get("paper_json"))
@@ -590,22 +1110,22 @@ else:
         st.info(f"Showing results from last analyzed paper: **{st.session_state.final_output['paper']['title']}**")
         render_results(st.session_state.final_output, st.session_state.get("paper_json"))
     else:
-        # Empty State
         st.markdown("<br>", unsafe_allow_html=True)
         cols = st.columns(3)
-        
         features = [
-            ("🔍", "Intelligent Discovery", "Automatically cross-references PapersWithCode and GitHub to find the most official, highly-rated implementation."),
-            ("🛡️", "Conflict Resolution", "Uses advanced RAG and LLM reasoning to detect and fix dependency hell before you ever type 'docker build'."),
-            ("🐳", "Production Ready", "Generates optimized Dockerfiles with precise base images, proper caching layers, and minimal attack surfaces.")
+            ("🔍", "Intelligent Discovery",
+             "Automatically cross-references PapersWithCode and GitHub to find the most official, highest-rated implementation for any ML paper."),
+            ("🛡️", "Conflict Resolution",
+             "Advanced RAG + LLM reasoning detects and resolves dependency hell before you ever run docker build."),
+            ("🐳", "Production Ready",
+             "Generates optimized Dockerfiles with precise base images, proper caching layers, and minimal attack surfaces."),
         ]
-        
         for col, (icon, title, desc) in zip(cols, features):
             with col:
                 st.markdown(f"""
-                <div class="feature-card">
-                    <div class="feature-icon">{icon}</div>
-                    <h3 style="margin: 0 0 1rem 0; font-size: 1.25rem; font-weight: 600;">{title}</h3>
-                    <p style="margin: 0; color: #94a3b8; line-height: 1.6;">{desc}</p>
+                <div class="fcard">
+                    <span class="fcard-icon">{icon}</span>
+                    <h3>{title}</h3>
+                    <p>{desc}</p>
                 </div>
                 """, unsafe_allow_html=True)
