@@ -77,6 +77,22 @@ html, body {
 }
 h1, h2, h3, h4, h5, h6 { font-family: 'Outfit', sans-serif !important; letter-spacing: -0.03em; }
 
+/* ─── MATERIAL SYMBOLS — always win, no matter what cascades ─ */
+/* Without this, any wildcard font-family rule (toolbar *, .main span, etc.)
+   breaks ligature-based icon fonts and renders glyph names as plain text.  */
+[data-testid="stIconMaterial"] {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined',
+                 'Material Icons', sans-serif !important;
+    font-style: normal !important;
+    font-weight: 400 !important;
+    line-height: 1 !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    display: inline-block !important;
+    -webkit-font-feature-settings: 'liga' !important;
+    font-feature-settings: 'liga' !important;
+}
+
 /* ─── RESTORE STREAMLIT TOOLBAR / HEADER ───────────────── */
 [data-testid="stToolbar"],
 [data-testid="stToolbar"] *,
@@ -667,7 +683,53 @@ body::before {
 .fcard h3 { font-size: 1.25rem; font-weight: 800; margin: 0 0 0.8rem 0; color: #f1f5f9; font-family: 'Outfit', sans-serif; letter-spacing: -0.02em; }
 .fcard p  { font-size: 0.96rem; color: #64748b; line-height: 1.75; margin: 0; font-family: 'Space Grotesk', sans-serif; }
 
-/* ─── FILE UPLOADER — all rules removed for debugging ──────── */
+/* ─── FILE UPLOADER ───────────────────────────────────────── */
+[data-testid="stFileUploader"] {
+    border: 2px dashed rgba(99,102,241,0.28) !important;
+    border-radius: 18px !important;
+    background: rgba(99,102,241,0.04) !important;
+    transition: border-color 0.3s, background 0.3s, box-shadow 0.3s !important;
+    padding: 1.2rem 1.4rem !important;
+}
+[data-testid="stFileUploader"]:hover {
+    border-color: rgba(99,102,241,0.6) !important;
+    background: rgba(99,102,241,0.08) !important;
+    box-shadow: 0 0 28px -6px rgba(99,102,241,0.18) !important;
+}
+/* Label above the dropzone */
+[data-testid="stFileUploader"] > label {
+    font-size: 1.05rem !important;
+    font-weight: 600 !important;
+    color: #e2e8f0 !important;
+    margin-bottom: 8px !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+}
+/* Browse-files button — target only the button, never icon spans inside it */
+[data-testid="stFileUploaderDropzone"] button,
+[data-testid="stFileUploaderDropZone"] button {
+    border-radius: 12px !important;
+    background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(79,70,229,0.22)) !important;
+    border: 1px solid rgba(99,102,241,0.38) !important;
+    color: #c7d2fe !important;
+    font-weight: 600 !important;
+    font-size: 0.92rem !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    padding: 0.45rem 1.1rem !important;
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s !important;
+    letter-spacing: 0.01em !important;
+}
+[data-testid="stFileUploaderDropzone"] button:hover,
+[data-testid="stFileUploaderDropZone"] button:hover {
+    background: linear-gradient(135deg, rgba(99,102,241,0.28), rgba(79,70,229,0.38)) !important;
+    border-color: rgba(99,102,241,0.65) !important;
+    box-shadow: 0 4px 18px -4px rgba(99,102,241,0.4) !important;
+    color: #eef2ff !important;
+}
+/* Helper text (200 MB · PDF) */
+[data-testid="stFileUploaderDropzoneInstructions"] small {
+    color: #475569 !important;
+    font-size: 0.82rem !important;
+}
 /* Fix Streamlit's default info text at top */
 .stAlert p, .stAlert span { font-size: 0.95rem !important; }
 /* Global text scale-up */
