@@ -2,64 +2,82 @@
   "paper": {
     "title": "Mastering Atari, Go, Chess and Shogi by Planning with a Learned Model",
     "arxiv_id": "1911.08265",
-    "authors": [],
+    "authors": [
+      "Julian Schrittwieser",
+      "Ioannis Antonoglou",
+      "Thomas Hubert",
+      "Karen Simonyan",
+      "Laurent Sifre",
+      "et al. (+7)"
+    ],
     "year": 2019,
     "abstract": "Constructing agents with planning capabilities has long been one of the main challenges in the pursuit of artificial intelligence. Tree-based planning methods have enjoyed huge success in challenging domains, such as chess and Go, where a perfect simulator is available. However, in real-world problems the dynamics governing the environment are often complex and unknown. In this work we present the algorithm which, by combining a tree-based search with a learned model, achieves superhuman perform",
     "parsed_by": "arxiv_latex"
   },
   "implementation_found": true,
-  "repo_url": "https://github.com/CogitoNTNU/Deeptactics-AlphaZero",
-  "search_method": "title",
+  "repo_url": "https://github.com/TJU-DRL-LAB/AI-Optimizer/tree/master/modelbased-rl/MuZero",
+  "search_method": "direct_github_code",
   "validation": {
-    "repo_url": "https://github.com/CogitoNTNU/Deeptactics-AlphaZero",
-    "confidence_score": 0.5516,
-    "classification": "MISMATCH",
+    "repo_url": "https://github.com/TJU-DRL-LAB/AI-Optimizer/tree/master/modelbased-rl/MuZero",
+    "confidence_score": 0.99,
+    "classification": "MATCH",
+    "is_official": false,
+    "official_reasons": [],
     "validator_scores": {
-      "semantic": 0.0,
-      "concept": 0.8333,
+      "semantic": 0.666,
+      "concept": 0.6667,
       "dependency": 1.0,
-      "codebase": 0.4062
+      "codebase": 0.3237
     },
-    "search_method": "title",
-    "stars": 12,
-    "is_official": false
+    "readme_content": "# muzero-pytorch\nPytorch Implementation of MuZero : \"[Mastering Atari , Go, Chess and Shogi by Planning with a Learned Model](https://arxiv.org/pdf/1911.08265.pdf)\"  based on [pseudo-code](https://arxiv.org/src/1911.08265v1/anc/pseudocode.py) provided by the authors\n\n_Note: This implementation has just been tested on CartPole-v1 and would required modifications(`in config folder`) for other environments_\n\n### Installation\n  - Python 3.6, 3.7\n  - ```bash\n      cd muzero-pytorch\n      pip install -r requirements.txt\n      ```\n\n### Usage:\n* Train: ```python main.py --env CartPole-v1 --case classic_control --opr train --force ```\n* Test: ```python main.py --env CartPole-v1 --case classic_control --opr test```\n* Visualize results : ```tensorboard --logdir=<result_dir_path>```\n\n|Required Arguments | Description|\n|:-------------|:-------------|\n| `--env`                          |Name of the environment|\n| `--case {atari,classic_control,box2d}` |It's used for switching between different domains(default: None)|\n| `--opr {train,test}`             |select the operation to be performed|\n\n|Optional Arguments | Description|\n|:-------------|:-------------|\n| `--value_loss_coeff`           |Scale for value loss (default: None)|\n| `--revisit_policy_search_rate` |Rate at which target policy is re-estimated (default:None)( only valid if ```--use_target_model``` is enabled)|\n| `--use_priority`               |Uses priority for  data sampling in replay buffer. Also, priority for new data is calculated based on loss (default: False)|\n| `--use_max_priority`           |Forces max priority assignment for new incoming data in replay buffer (only valid if ```--use_priority``` is enabled) (default: False) |\n| `--use_target_model`           |Use target model for bootstrap value estimation (default: False)|\n| `--result_dir`                 |Directory Path to store results (defaut: current working directory)|\n| `--no_cuda`                    |no cuda usage (default: False)|\n| `--debug`                      |If enables, logs additional values  (default:False)|\n| `--render`                     |Renders the environment (default: False)|\n| `--force`                      |Overrides past results (default: False)|\n| `--seed`                       |seed (default: 0)|\n| `--test_episodes`              |Evaluation episode count (default: 10)|\n\n```Note: default: None => Values are loaded from the corresponding config```\n\n## Training\n### CartPole-v1\n- Curves represents model evaluation for 5 episodes at 100 step training interval. \n- Also, each curve is a  mean scores over 5 runs (seeds : [0,100,200,300,400])\n\n| |\n|:--|\n|![](static/imgs/cartpole_test_score.png)|\n|![](static/imgs/legend_cartpole.png)|\n\n\n\n\n\n",
+    "description": null,
+    "pre_boost_score": 0.6474,
+    "boosts": {
+      "weak_officiality": 0.0,
+      "acronym": 0.0,
+      "stars": 0.12,
+      "implementation_of_sentence": 0.9,
+      "official_override": false,
+      "applied_total": 0.3426
+    },
+    "search_method": "direct_github_code",
+    "stars": 3464
   },
-  "repo_health_score": 50,
+  "repo_health_score": 55,
   "health_signals": {
-    "last_commit_days_ago": 753,
-    "open_issues": 0,
+    "last_commit_days_ago": 1080,
+    "open_issues": 3,
     "closed_issues": null,
-    "stars": 12,
-    "forks": 0,
+    "stars": 3464,
+    "forks": 597,
     "archived": false,
-    "year": "2024",
-    "repo_age_days": 831,
+    "year": "2023",
+    "repo_age_days": 1542,
     "contributor_count": null,
     "has_ci": null
   },
   "health_label": "Stale",
   "health_emoji": "🟠",
   "conflicts_found": [
-    "error: ignored the following versions that require a different python version: 1.21.2 requires-python >=3.7,<3.11; 1.21.3 requires-python >=3.7,<3.11; 1.21.4 requires-python >=3.7,<3.11; 1.21.5 requires-python >=3.7,<3.11; 1.21.6 requires-python >=3.7,<3.11",
-    "error: could not find a version that satisfies the requirement nvidia-cublas-cu12==12.1.3.1 (from versions: 0.0.1.dev5)",
-    "error: no matching distribution found for nvidia-cublas-cu12==12.1.3.1"
+    "tensorflow-gpu==1.13.1 is not available, the latest version is 2.12.0"
   ],
   "conflicts_resolved": true,
   "dep_warnings": [
-    "Dependency file used: requirements.txt"
+    "pip is outdated, consider updating from 24.2 to 26.1.1",
+    "git+https://github.com/hartikainen/serializable.git@76516385a3a716ed4a2a9ad877e2d5cbcf18d4e6 is a git repository and may not be reproducible"
   ],
-  "dockerfile": "# Dockerfile for: Mastering Atari, Go, Chess and Shogi by Planning with a Learned Model\n# Generated by Coralaus\n\nFROM python:3.11-slim\n\n# Install system dependencies\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    build-essential \\\n    git \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Set working directory\nWORKDIR /app\n\n# Copy requirements\nCOPY requirements.txt .\n\n# Install Python dependencies\nRUN pip install --no-cache-dir -r requirements.txt\n\n# Copy implementation\nCOPY . .\n\n# Run\nCMD [\"python\", \"main.py\"]\n",
+  "dockerfile": "FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04\n\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && \\\n    apt-get install -y build-essential git wget python3 python3-pip libgl1-mesa-glx libglib2.0-0 unzip && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN ln -sf /usr/bin/python3 /usr/bin/python\n\nCOPY modelbased-rl/BMPO/requirements.txt .\nCOPY modelbased-rl/MBPO/ED2-MBPO/environment/requirements.txt .\nCOPY modelbased-rl/MuZero/requirements.txt .\n\nRUN pip3 install --no-cache-dir -r modelbased-rl/BMPO/requirements.txt\nRUN pip3 install --no-cache-dir -r modelbased-rl/MBPO/ED2-MBPO/environment/requirements.txt\nRUN pip3 install --no-cache-dir -r modelbased-rl/MuZero/requirements.txt\n\nCOPY . /workspace/\n\nWORKDIR /workspace/",
   "implementation_script": null,
-  "resolved_requirements": "absl-py==2.1.0\nattrs==23.2.0\ncontextlib2==21.6.0\nfilelock==3.14.0\nfsspec==2024.3.1\niniconfig==2.0.0\nJinja2==3.1.4\nMarkupSafe==2.1.5\nml_collections==0.1.1\nmpmath==1.3.0\nnetworkx==3.3\nnumpy==1.26.4\nnvidia-cublas-cu12==12.1.3.1\nnvidia-cuda-cupti-cu12==12.1.105\nnvidia-cuda-nvrtc-cu12==12.1.105\nnvidia-cuda-runtime-cu12==12.1.105\nnvidia-cudnn-cu12==8.9.2.26\nnvidia-cufft-cu12==11.0.2.54\nnvidia-curand-cu12==10.3.2.106\nnvidia-cusolver-cu12==11.4.5.107\nnvidia-cusparse-cu12==12.1.0.106\nnvidia-nccl-cu12==2.20.5\nnvidia-nvjitlink-cu12==12.4.127\nnvidia-nvtx-cu12==12.1.105\nopen-spiel==1.4\npackaging==24.0\npluggy==1.5.0\npytest==8.2.0\nPyYAML==6.0.1\nscipy==1.13.0\nsix==1.16.0\nsympy==1.12\ntorch==2.3.0\ntqdm==4.66.4\ntyping_extensions==4.11.0\n",
+  "resolved_requirements": "mujoco-py==1.50.1.68\ntensorflow==1.13.1\ntensorflow-probability==0.6.0\ntqdm==4.32.1\nray[rllib,debug]==0.6.4\ngtimer==1.0.0b5\ngym==0.12.0\ngit+https://github.com/hartikainen/serializable.git@76516385a3a716ed4a2a9ad877e2d5cbcf18d4e6",
   "generated_from_scratch": false,
   "keyterms": [],
   "related_repos": [],
   "dockerfile_validation": {},
   "repo_relevance": {},
-  "coral_queries_used": 103,
+  "coral_queries_used": 447,
   "llm_calls": {
     "gemini_flash": 0,
     "groq_llama": 1
   },
-  "timestamp": "2026-05-30T23:16:01.113539+00:00"
+  "timestamp": "2026-05-31T08:54:17.032095+00:00"
 }
