@@ -438,7 +438,7 @@ def _pre_filter_candidates(candidates: list, paper_json: Optional[dict] = None) 
         course_patterns = [
             r"cs\d{3}.*assignment", r"assignment.*cs\d{3}",
             r"homework.*cs\d{3}", r"coursework", r"university assignment",
-            r"homework assignment", r"lab assignment", r"class assignment", r"students", r"curriculum", r"syllabus", r"from-scratch",
+            r"homework assignment", r"lab assignment", r"class assignment", r"students", r"curriculum", r"syllabus", r"from-scratch", r"for-students",r"for_beginners",r"beginners",
             r"cs-\d{3}", r"cs\d{3}-"
         ]
         is_course = False
@@ -560,7 +560,7 @@ def validate_repo(paper_json: dict, repo_url: str, c_metadata: Optional[dict] = 
     pruned_by_readme_reason = ""
     if readme:
         readme_lower = readme.lower()
-        note_indicators = ["my notes", "reading notes", "summaries", "handwritten"]
+        note_indicators = ["my notes", "reading notes", "summaries", "handwritten", "for_beginners"]
         found_indicators = [ind for ind in note_indicators if ind in readme_lower]
         if found_indicators:
             pruned_by_readme = True
