@@ -130,6 +130,12 @@ def extract_identifiers(pdf_path: str) -> dict:
                 first_pages_text += (page.extract_text() or "") + "\n"
 
         arxiv_id = _extract_arxiv_id(first_pages_text)
+        if not arxiv_id:
+            # Fallback to filename parsing
+            fn = os.path.basename(pdf_path)
+            m = re.search(r"(\d{4}\.\d{4,5})", fn)
+            if m:
+                arxiv_id = m.group(1)
         doi = _extract_doi(first_pages_text)
         title_raw = _extract_title(meta, first_pages_text, first_page)
         authors_raw = _extract_authors(meta)

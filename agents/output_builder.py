@@ -224,6 +224,8 @@ def _format_authors(authors: list) -> list:
     for a in authors[:5]:
         if isinstance(a, dict):
             name = f"{a.get('first', '')} {a.get('last', '')}".strip()
+            if not name and a.get("name"):
+                name = a.get("name").strip()
             result.append(name or "Unknown")
         elif isinstance(a, str):
             result.append(a)
