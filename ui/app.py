@@ -1118,7 +1118,7 @@ st.markdown("""
         General Research Environment
     </div>
     <h1 class="hero-title">Coralaus</h1>
-    <h3 style="font-weight: 600; color: #818cf8; font-style: italic; margin-top: -10px; margin-bottom: 20px; font-size: 1.8rem; letter-spacing: 0.02em;">fucking done right !</h3>
+    <h3 style="font-weight: 600; color: #818cf8; font-style: italic; margin-top: -10px; margin-bottom: 20px; font-size: 1.8rem; letter-spacing: 0.02em;">Reproducibility done right !</h3>
     <p class="hero-sub" style="font-size: 1.3rem;">
         From any research paper to a fully reproducible Docker environment — 
         automatically discovered, validated, and conflict-free.
@@ -1166,8 +1166,8 @@ if uploaded_file:
         # ── Step 1 ──────────────────────────────────────────────
         ph1, ld1 = st.empty(), st.empty()
         with ph1: render_stepper(1, "Parsing PDF Structure", "active",
-            "Extracting text, metadata, sections & references via GROBID · Building paper knowledge graph")
-        with ld1: st.markdown(render_loader("Parsing PDF…", "GROBID structural extraction running",
+            "Extracting text, metadata, sections & references via PyPDF")
+        with ld1: st.markdown(render_loader("Parsing PDF…", "PyPDF structural extraction running",
             substeps=["Tokenizing raw PDF bytes", "Detecting document structure", "Extracting sections & abstract", "Parsing author metadata", "Identifying citations & references"]
         ), unsafe_allow_html=True)
 
@@ -1234,7 +1234,7 @@ if uploaded_file:
             with ld25: st.markdown(
                 render_loader(
                     "Validating candidates\u2026",
-                    f"Running 4-stage RAG pipeline across {n_found} repositories",
+                    f"Running 4-stage validation pipeline across {n_found} repositories",
                     substeps=["Loading SentenceTransformer embeddings", "Encoding paper abstract", "Fetching README from GitHub", "Computing cosine similarity", "Running fuzzy concept match", "Checking framework dependencies"],
                     extra_html=rag_html,
                 ),
