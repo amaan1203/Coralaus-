@@ -1,6 +1,6 @@
 # Coralaus
 
-> 🏴‍☠️ Pirates of the Coral-bean Hackathon · Track 2
+>  Pirates of the Coral-bean Hackathon · Track 2
 
 **Coralaus** is an end-to-end research paper reproducibility engine. Drop in any ML/CS paper as a PDF and it automatically finds, validates, fixes, or generates a working code implementation — all powered by a **Dual MCP + Coral SQL** architecture.
 
