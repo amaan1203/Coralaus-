@@ -505,11 +505,25 @@ def query_arxiv(arxiv_id: str) -> Optional[ResolvedPaper]:
                 if not title:
                     return None
 
+                author_matches = re.findall(r"<author[^>]*>(.*?)</author>", xml, flags=re.DOTALL)
+                authors = []
+                for author_xml in author_matches:
+                    name_match = re.search(r"<name[^>]*>(.*?)</name>", author_xml, flags=re.DOTALL)
+                    if name_match:
+                        name = re.sub(r"<[^>]+>", "", name_match.group(1)).strip()
+                        parts = name.split()
+                        authors.append({
+                            "first": parts[0] if parts else "",
+                            "last": parts[-1] if len(parts) > 1 else "",
+                            "affiliation": "",
+                        })
+
                 return ResolvedPaper(
                     source="arxiv",
                     confidence=0.99,
                     arxiv_id=arxiv_id,
                     title=clean_title(title),
+                    authors=authors,
                     abstract=clean_text(
                         extract_xml(xml, "summary")
                     ),
@@ -608,6 +622,23 @@ def query_semantic_scholar_search(
     return s2_to_paper(best, confidence=score)
 
 
+def extract_s2_authors(data: dict) -> list[dict]:
+    authors = []
+    for author in data.get("authors") or []:
+        if not isinstance(author, dict):
+            continue
+        name = (author.get("name") or "").strip()
+        if not name:
+            continue
+        parts = name.split()
+        authors.append({
+            "first": parts[0] if parts else "",
+            "last": parts[-1] if len(parts) > 1 else "",
+            "affiliation": ""
+        })
+    return authors
+
+
 def s2_to_paper(data: dict, confidence: float):
     ext = data.get("externalIds") or {}
     oa = data.get("openAccessPdf") or {}
@@ -618,7 +649,7 @@ def s2_to_paper(data: dict, confidence: float):
         arxiv_id=ext.get("ArXiv", ""),
         doi=ext.get("DOI", ""),
         title=data.get("title", ""),
-        authors=data.get("authors", []),
+        authors=extract_s2_authors(data),
         year=data.get("year"),
         venue=data.get("venue", ""),
         abstract=data.get("abstract", "") or "",
@@ -819,6 +850,54 @@ def extract_openalex_s2_paper_id(ids: dict) -> str:
 # CrossRef
 # =============================================================================
 
+def extract_crossref_authors(item: dict) -> list[dict]:
+    authors = []
+    for author in item.get("author") or []:
+        if not isinstance(author, dict):
+            continue
+        given = (author.get("given") or "").strip()
+        family = (author.get("family") or "").strip()
+        
+        affiliations = author.get("affiliation") or []
+        affiliation_name = ""
+        if affiliations and isinstance(affiliations[0], dict):
+            affiliation_name = (affiliations[0].get("name") or "").strip()
+        
+        name = (author.get("name") or "").strip()
+        if not given and not family and name:
+            parts = name.split()
+            given = parts[0] if parts else ""
+            family = parts[-1] if len(parts) > 1 else ""
+
+        authors.append({
+            "first": given,
+            "last": family,
+            "affiliation": affiliation_name,
+        })
+    return authors
+
+
+def extract_crossref_year(item: dict) -> Optional[int]:
+    for key in ("published-print", "published-online", "created", "published"):
+        val = item.get(key)
+        if not isinstance(val, dict):
+            continue
+        date_parts = val.get("date-parts")
+        if date_parts and date_parts[0]:
+            try:
+                return int(date_parts[0][0])
+            except (ValueError, TypeError, IndexError):
+                pass
+    return None
+
+
+def extract_crossref_abstract(item: dict) -> str:
+    abstract_xml = item.get("abstract", "")
+    if isinstance(abstract_xml, str) and abstract_xml:
+        return re.sub(r"<[^>]+>", "", abstract_xml).strip()
+    return ""
+
+
 def query_crossref_search(title: str):
 
     url = (
@@ -861,6 +940,9 @@ def query_crossref_search(title: str):
         confidence=score,
         title=best["normalized_title"],
         doi=best.get("DOI", ""),
+        authors=extract_crossref_authors(best),
+        year=extract_crossref_year(best),
+        abstract=extract_crossref_abstract(best),
     )
 
 
@@ -879,6 +961,9 @@ def query_crossref_by_doi(doi: str):
         confidence=0.99,
         doi=doi,
         title=titles[0] if titles else "",
+        authors=extract_crossref_authors(item),
+        year=extract_crossref_year(item),
+        abstract=extract_crossref_abstract(item),
     )
 
 
@@ -976,7 +1061,9 @@ def is_valid_title(title: str) -> bool:
 # Utilities
 # =============================================================================
 
-def normalize_doi(doi: str) -> str:
+def normalize_doi(doi: str | None) -> str:
+    if not doi:
+        return ""
     doi = doi.strip()
 
     doi = re.sub(r"^https?://doi\.org/", "", doi)
@@ -984,12 +1071,14 @@ def normalize_doi(doi: str) -> str:
     return doi
 
 
-def normalize_arxiv_id(arxiv_id: str) -> str:
+def normalize_arxiv_id(arxiv_id: str | None) -> str:
     """
     Supports both:
         1706.03762
         cs.CL/9901001
     """
+    if not arxiv_id:
+        return ""
 
     arxiv_id = arxiv_id.strip()
 
@@ -1011,15 +1100,19 @@ def looks_like_arxiv_id(value: str) -> bool:
     )
 
 
-def clean_title(title: str) -> str:
+def clean_title(title: str | None) -> str:
     return clean_text(title)
 
 
-def clean_text(text: str) -> str:
+def clean_text(text: str | None) -> str:
+    if not text:
+        return ""
     return re.sub(r"\s+", " ", text).strip()
 
 
-def normalize_title_for_matching(text: str) -> str:
+def normalize_title_for_matching(text: str | None) -> str:
+    if not text:
+        return ""
 
     text = text.lower()
 

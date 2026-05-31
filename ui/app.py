@@ -64,9 +64,15 @@ html, body {
     font-family: 'Space Grotesk', 'Outfit', sans-serif !important;
 }
 /* Scope font rules to page content only — never touch Streamlit's own chrome */
-.main p, .main span, .main div, .main li, .main a, .main label,
-.block-container p, .block-container span, .block-container div,
+/* Exclude stIconMaterial spans: those use the Material Symbols ligature font;
+   overriding font-family on them renders icon glyphs as raw text (e.g. "upload") */
+.main p, .main div, .main li, .main a, .main label,
+.block-container p, .block-container div,
 .block-container li, .block-container a, .block-container label {
+    font-family: 'Space Grotesk', 'Outfit', sans-serif;
+}
+.main span:not([data-testid="stIconMaterial"]),
+.block-container span:not([data-testid="stIconMaterial"]) {
     font-family: 'Space Grotesk', 'Outfit', sans-serif;
 }
 h1, h2, h3, h4, h5, h6 { font-family: 'Outfit', sans-serif !important; letter-spacing: -0.03em; }
@@ -661,69 +667,7 @@ body::before {
 .fcard h3 { font-size: 1.25rem; font-weight: 800; margin: 0 0 0.8rem 0; color: #f1f5f9; font-family: 'Outfit', sans-serif; letter-spacing: -0.02em; }
 .fcard p  { font-size: 0.96rem; color: #64748b; line-height: 1.75; margin: 0; font-family: 'Space Grotesk', sans-serif; }
 
-/* ─── FILE UPLOADER ───────────────────────────────────────── */
-[data-testid="stFileUploader"] {
-    border: 2px dashed rgba(99,102,241,0.28) !important;
-    border-radius: 18px !important;
-    background: rgba(99,102,241,0.04) !important;
-    transition: border-color 0.3s !important;
-    padding: 1rem !important;
-}
-[data-testid="stFileUploader"]:hover {
-    border-color: rgba(99,102,241,0.55) !important;
-    background: rgba(99,102,241,0.07) !important;
-}
-/* Drop zone: horizontal row layout so button + info text sit side by side */
-[data-testid="stFileUploaderDropZone"] {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: center !important;
-    justify-content: flex-start !important;
-    gap: 16px !important;
-    padding: 14px 18px !important;
-    flex-wrap: nowrap !important;
-}
-/* Upload button: never shrink, keep text on one line */
-[data-testid="stFileUploaderDropZone"] button {
-    flex-shrink: 0 !important;
-    min-width: 110px !important;
-    white-space: nowrap !important;
-    word-break: normal !important;
-    overflow-wrap: normal !important;
-}
-[data-testid="stFileUploaderDropZone"] button span,
-[data-testid="stFileUploaderDropZone"] button p {
-    white-space: nowrap !important;
-    word-break: normal !important;
-    overflow-wrap: normal !important;
-    font-size: 0.95rem !important;
-    font-weight: 600 !important;
-}
-/* Hide instruction labels/spans inside the dropzone that overlap */
-[data-testid="stFileUploaderDropzoneInstructions"],
-[data-testid="stFileUploaderDropZone"] > div > span,
-[data-testid="stFileUploaderDropZone"] > span {
-    display: none !important;
-}
-[data-testid="stFileUploaderDropZone"] button span {
-    display: inline !important;
-}
-/* Info text (200MB per file · PDF) — allow wrap, but keep readable */
-[data-testid="stFileUploaderDropZone"] small,
-[data-testid="stFileUploaderDropZone"] > div > p {
-    font-size: 0.92rem !important;
-    color: #64748b !important;
-    white-space: normal !important;
-    line-height: 1.5 !important;
-}
-/* Uploader top label */
-[data-testid="stFileUploader"] label {
-    font-size: 1.05rem !important;
-    font-weight: 600 !important;
-    color: #e2e8f0 !important;
-    margin-bottom: 6px !important;
-    font-family: 'Space Grotesk', sans-serif !important;
-}
+/* ─── FILE UPLOADER — all rules removed for debugging ──────── */
 /* Fix Streamlit's default info text at top */
 .stAlert p, .stAlert span { font-size: 0.95rem !important; }
 /* Global text scale-up */
@@ -1112,7 +1056,7 @@ st.markdown("""
         General Research Environment
     </div>
     <h1 class="hero-title">Coralaus</h1>
-    <h3 style="font-weight: 600; color: #818cf8; font-style: italic; margin-top: -10px; margin-bottom: 20px; font-size: 1.8rem; letter-spacing: 0.02em;">reproducibility done right !</h3>
+    <h3 style="font-weight: 600; color: #818cf8; font-style: italic; margin-top: -10px; margin-bottom: 20px; font-size: 1.8rem; letter-spacing: 0.02em;">fucking done right !</h3>
     <p class="hero-sub" style="font-size: 1.3rem;">
         From any research paper to a fully reproducible Docker environment — 
         automatically discovered, validated, and conflict-free.

@@ -196,7 +196,7 @@ class SemanticScholarClient:
             h["x-api-key"] = self._api_key
         return h
 
-    def _get(self, url: str, params: dict = None, retries: int = 1) -> Optional[requests.Response]:
+    def _get(self, url: str, params: dict = None, retries: int = 3) -> Optional[requests.Response]:
         """
         Rate-limit-aware GET with automatic retry on 429.
         Retries kept at 1 (down from 3) — S2 is consistently rate-limited without
@@ -238,6 +238,11 @@ class SemanticScholarClient:
         No authentication required.
         """
         try:
+            # Ensure HF_TOKEN is set from HUGGING_FACE_ACCESS_TOKEN to enable authenticated HF Hub access
+            hf_token = os.environ.get("HUGGING_FACE_ACCESS_TOKEN", "")
+            if hf_token:
+                os.environ["HF_TOKEN"] = hf_token
+
             resp = requests.get(
                 f"https://huggingface.co/api/papers/{arxiv_id}",
                 timeout=10,
@@ -268,12 +273,15 @@ class SemanticScholarClient:
         """Extract the first GitHub repository URL from a block of text."""
         import re
         match = re.search(
-            r'https?://github\.com/([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+)',
+            r'https?://github\.com/([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)(?=[\s\)\]\},;:]|$)',
             text
         )
         if match:
-            owner, repo = match.group(1), match.group(2)
-            return f"https://github.com/{owner}/{repo}"
+            repo_path = match.group(1)
+            url = f"https://github.com/{repo_path}"
+            while url.endswith("/") or any(url.endswith(c) for c in ".,;:()[]{}"):
+                url = url.rstrip("/").rstrip(".,;:()[]{}")
+            return url
         return None
 
     def _search_github(self, query: str) -> list[dict]:
