@@ -55,6 +55,14 @@ PDF Input
 
 ---
 
+## Agentic Coral based Rag Pipeline ( HyDE + FLARE )
+
+**The HyDE (Hypothetical Embeddings)** agent firstly, generates a hypothetical Dockerfile based on the paper content along with using coral to fetch dependencies ( requirements.txt , readme.md , pyproject.toml and other fall backs)  of the implementation and generates a baseline dockerfile. 
+
+The agent then utilises **CORAL to pull real, working human Dockerfiles ( currently 3 )** with similar structure to the above generated dockerfile as additional context for the final agent.
+
+Finally **the FLARE (Active Retrieval)** agent, If it hits legacy bottlenecks or conflict blocks, pauses mid-generation and triggers Coral queries to live-search GitHub issues for exact wheel links and command sequences, then self validates the generated dockerfile.
+
 ##  Coral Usage — Where & How
 
 Coral is used in **two agents** across the pipeline, always with a full GitHub REST API fallback if Coral is unavailable or rate-limited.
