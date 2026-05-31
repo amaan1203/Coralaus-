@@ -5,11 +5,11 @@
 **Coralaus** is an end-to-end research paper reproducibility engine. Drop in any ML/CS paper as a PDF and it automatically finds, validates, fixes, or generates a working code implementation — all powered by a **Dual MCP + Coral SQL** architecture.
 
 1. Parses the full paper into a structured JSON representation offline using **PyPDF2**.
-2. Searches for official code implementations across **Semantic Scholar, Hugging Face Papers, and GitHub** using 7 parallel strategies.
-3. Scores the discovered repository's maintenance health (0–100) using **Coral SQL queries against the GitHub connector**.
-4. Fetches dependency files from the repo and identifies Python package conflicts.
-5. Resolves conflicts and generates a working `Dockerfile` using **Groq (Llama 3.3 70B)**.
-6. When no implementation exists, searches related repos via **Coral cross-repo SQL** and generates a reference implementation using **Gemini 2.0 Flash**.
+3. Searches for official code implementations across **Semantic Scholar, Hugging Face Papers, and GitHub** using 7 parallel strategies.
+4. Scores the discovered repository's maintenance health (0–100) using **Coral SQL queries against the GitHub connector**.
+5. Fetches dependency files from the repo and identifies Python package conflicts.
+6. Resolves conflicts and generates a working `Dockerfile` using **Groq (Llama 3.3 70B)**.
+7. When no implementation exists, searches related repos via **Coral cross-repo SQL** and generates a reference implementation using **Gemini 2.0 Flash**.
 
 ---
 
@@ -103,6 +103,11 @@ coral.sql(f"""
 When a match is found inside a subdirectory (e.g. `papers/2023/attention/README.md`), Coralaus adds both the root repo URL and the specific subdirectory URL as candidates. Real star counts are fetched from the GitHub API for each discovered repo to enable accurate ranking.
 
 > **Fallback:** If `coral.available` is `False`, both strategies fall back to `github.com/search/repositories` and `github.com/search/code` REST endpoints directly.
+
+Examples of Successfully Validated Research Paper Implementations:
+
+<img width="1569" height="314" alt="{55FDD883-299D-4910-8DF4-A17B1CD2ACFE}" src="https://github.com/user-attachments/assets/70ce7448-509c-4cc0-9edd-d8588880bad8" />
+
 
 ---
 
